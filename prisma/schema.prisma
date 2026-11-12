@@ -1,0 +1,662 @@
+// Prisma Schema cho NovaCast
+// Multi-tenant Store Management: Food, Retail, Warehouse
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ----------------------------------------------------
+// 1. TÀI KHOẢN, CỬA HÀNG & PHÂN QUYỀN
+// ----------------------------------------------------
+
+enum StoreType {
+  FOOD
+  RETAIL
+  WAREHOUSE
+}
+
+enum Role {
+  OWNER
+  MANAGER
+  STAFF
+}
+
+model User {
+  id           String        @id @default(cuid())
+  email        String?       @unique
+  phone        String        @unique
+  fullName     String
+  passwordHash String
+  avatarUrl    String?
+  isActive     Boolean       @default(true)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  memberships  StoreMember[]
+  otpCodes     OtpCode[]
+  createdLogs  ActivityLog[]
+
+  @@map("users")
+}
+
+model Store {
+  id          String      @id @default(cuid())
+  name        String
+  code        String?     @unique
+  type        StoreType
+  address     String?
+  phone       String?
+  logoUrl     String?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  members     StoreMember[]
+  categories  Category[]
+  products    Product[]
+  materials   Material[]
+  locations   StockLocation[]
+  stockLevels StockLevel[]
+  movements   StockMovement[]
+  vouchers    Voucher[]
+  orders      Order[]
+  partners    Partner[]
+  audits      StockAudit[]
+  receipts    StockReceipt[]
+  issues      StockIssue[]
+  notifications Notification[]
+  logs        ActivityLog[]
+
+  @@map("stores")
+}
+
+model StoreMember {
+  id        String   @id @default(cuid())
+  storeId   String
+  userId    String
+  role      Role     @default(STAFF)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  store     Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([storeId, userId])
+  @@map("store_members")
+}
+
+model OtpCode {
+  id        String   @id @default(cuid())
+  userId    String?
+  target    String   // email or phone
+  codeHash  String
+  expiresAt DateTime
+  attempts  Int      @default(0)
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([target])
+  @@map("otp_codes")
+}
+
+// ----------------------------------------------------
+// 2. VỊ TRÍ KHO & SỔ CÁI TỒN KHO (QUAN TRỌNG)
+// ----------------------------------------------------
+
+enum MovementType {
+  RECEIPT       // Nhập hàng / nhập kho
+  ISSUE         // Xuất kho / xuất NVL
+  SALE          // Bán hàng tại quầy / đơn hàng
+  RETURN        // Khách trả hàng
+  TRANSFER_IN   // Chuyển kho vào
+  TRANSFER_OUT  // Chuyển kho ra
+  ADJUSTMENT    // Điều chỉnh sau kiểm kê / cân bằng kho
+  DISPOSE       // Xuất hủy hàng hỏng
+}
+
+model StockLocation {
+  id        String   @id @default(cuid())
+  storeId   String
+  name      String   // VD: "Kệ A1 - Tầng 2", "Kệ bán lẻ", "Kho tổng", "Hàng lỗi"
+  code      String?
+  isDefault Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  store     Store        @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  levels    StockLevel[]
+  fromMoves StockMovement[] @relation("FromLocation")
+  toMoves   StockMovement[] @relation("ToLocation")
+
+  @@unique([storeId, name])
+  @@map("stock_locations")
+}
+
+model StockLevel {
+  id         String   @id @default(cuid())
+  storeId    String
+  locationId String
+  variantId  String?  // null nếu là NVL kho/đồ ăn
+  materialId String?  // null nếu là sản phẩm bán lẻ
+  quantity   Int      @default(0)
+  updatedAt  DateTime @updatedAt
+
+  store      Store          @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  location   StockLocation  @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  variant    ProductVariant? @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  material   Material?      @relation(fields: [materialId], references: [id], onDelete: Cascade)
+
+  @@unique([locationId, variantId, materialId])
+  @@index([storeId, variantId])
+  @@index([storeId, materialId])
+  @@map("stock_levels")
+}
+
+model StockMovement {
+  id             String       @id @default(cuid())
+  storeId        String
+  variantId      String?
+  materialId     String?
+  fromLocationId String?
+  toLocationId   String?
+  quantityChange Int          // +/-
+  type           MovementType
+  refType        String?      // RECEIPT, ISSUE, ORDER, AUDIT, RETURN, POS
+  refId          String?
+  unitCost       BigInt?      // Giá vốn lúc xuất/nhập (VND)
+  note           String?
+  createdBy      String?
+  createdAt      DateTime     @default(now())
+
+  store          Store          @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  variant        ProductVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+  material       Material?      @relation(fields: [materialId], references: [id], onDelete: SetNull)
+  fromLocation   StockLocation? @relation("FromLocation", fields: [fromLocationId], references: [id], onDelete: SetNull)
+  toLocation     StockLocation? @relation("ToLocation", fields: [toLocationId], references: [id], onDelete: SetNull)
+
+  @@index([storeId, createdAt])
+  @@index([variantId])
+  @@index([materialId])
+  @@map("stock_movements")
+}
+
+// ----------------------------------------------------
+// 3. SẢN PHẨM, BIẾN THỂ & DANH MỤC
+// ----------------------------------------------------
+
+enum ProductStatus {
+  ACTIVE       // Đang bán / Đang dùng
+  INACTIVE     // Ngừng bán
+  OUT_OF_STOCK // Tạm hết hàng
+}
+
+enum MaterialType {
+  RAW_MATERIAL      // Nguyên vật liệu
+  SEMI_FINISHED     // Bán thành phẩm
+  FINISHED_PRODUCT  // Thành phẩm
+}
+
+model Category {
+  id        String    @id @default(cuid())
+  storeId   String
+  name      String
+  order     Int       @default(0)
+  isVisible Boolean   @default(true)
+  deletedAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  store     Store     @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  products  Product[]
+
+  @@unique([storeId, name])
+  @@map("categories")
+}
+
+model Product {
+  id             String         @id @default(cuid())
+  storeId        String
+  categoryId     String?
+  name           String
+  description    String?
+  imageUrl       String?
+  basePrice      BigInt         @default(0) // Giá niêm yết (VND)
+  costPrice      BigInt         @default(0) // Giá vốn
+  discountPercent Int           @default(0) // 0%, 5%, 10%, 15%, 20%
+  status         ProductStatus  @default(ACTIVE)
+  isCombo        Boolean        @default(false)
+  isFeatured     Boolean        @default(false)
+  deletedAt      DateTime?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  store          Store          @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  category       Category?      @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  variants       ProductVariant[]
+  comboItems     ComboItem[]    @relation("ComboParent")
+  partOfCombos   ComboItem[]    @relation("ComboChild")
+  recipeItems    RecipeItem[]
+  reviews        Review[]
+
+  @@index([storeId, status])
+  @@map("products")
+}
+
+model ProductVariant {
+  id             String         @id @default(cuid())
+  productId      String
+  sku            String
+  barcode        String?
+  name           String         // Tên hiển thị (VD: "Áo Polo - Trắng / M")
+  color          String?
+  size           String?
+  costPrice      BigInt         @default(0)
+  price          BigInt         @default(0)
+  discountPercent Int           @default(0)
+  minStock       Int            @default(5)
+  shelfQty       Int            @default(0) // Cache tồn tại Kệ
+  warehouseQty   Int            @default(0) // Cache tồn tại Kho
+  totalQty       Int            @default(0) // Cache tổng tồn
+  soldCount      Int            @default(0)
+  deletedAt      DateTime?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  product        Product        @relation(fields: [productId], references: [id], onDelete: Cascade)
+  stockLevels    StockLevel[]
+  movements      StockMovement[]
+  orderItems     OrderItem[]
+  receiptItems   StockReceiptItem[]
+  issueItems     StockIssueItem[]
+  auditItems     StockAuditItem[]
+
+  @@unique([productId, sku])
+  @@index([barcode])
+  @@map("product_variants")
+}
+
+model ComboItem {
+  id              String   @id @default(cuid())
+  comboProductId  String
+  childProductId  String
+  quantity        Int      @default(1)
+
+  comboProduct    Product  @relation("ComboParent", fields: [comboProductId], references: [id], onDelete: Cascade)
+  childProduct    Product  @relation("ComboChild", fields: [childProductId], references: [id], onDelete: Cascade)
+
+  @@unique([comboProductId, childProductId])
+  @@map("combo_items")
+}
+
+// ----------------------------------------------------
+// 4. NGUYÊN LIỆU & ĐỊNH LƯỢNG (F&B / KHO DOANH NGHIỆP)
+// ----------------------------------------------------
+
+model Material {
+  id             String         @id @default(cuid())
+  storeId        String
+  sku            String
+  barcode        String?
+  name           String
+  type           MaterialType   @default(RAW_MATERIAL)
+  unit           String         // Cuộn, Kg, Cái, Thùng, Bao, Cây...
+  costPrice      BigInt         @default(0)
+  minStock       Int            @default(10)
+  totalQty       Int            @default(0)
+  locationBin    String?        // Kệ A1 - Tầng 2
+  deletedAt      DateTime?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  store          Store          @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  stockLevels    StockLevel[]
+  movements      StockMovement[]
+  recipeItems    RecipeItem[]
+  receiptItems   StockReceiptItem[]
+  issueItems     StockIssueItem[]
+  auditItems     StockAuditItem[]
+
+  @@unique([storeId, sku])
+  @@map("materials")
+}
+
+model RecipeItem {
+  id          String    @id @default(cuid())
+  productId   String
+  materialId  String
+  quantity    Float     // SL nguyên liệu cho 1 đơn vị món
+  unit        String
+
+  product     Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  material    Material  @relation(fields: [materialId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, materialId])
+  @@map("recipe_items")
+}
+
+// ----------------------------------------------------
+// 5. ĐỐI TÁC (NCC & KHÁCH HÀNG)
+// ----------------------------------------------------
+
+enum PartnerType {
+  SUPPLIER
+  CUSTOMER
+}
+
+model Partner {
+  id          String      @id @default(cuid())
+  storeId     String
+  type        PartnerType
+  name        String
+  phone       String?
+  email       String?
+  address     String?
+  taxCode     String?
+  debtAmount  BigInt      @default(0) // Công nợ
+  deletedAt   DateTime?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  store       Store       @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  orders      Order[]
+  receipts    StockReceipt[]
+
+  @@index([storeId, type])
+  @@map("partners")
+}
+
+// ----------------------------------------------------
+// 6. ĐƠN HÀNG, POS & VOUCHER
+// ----------------------------------------------------
+
+enum OrderStatus {
+  PENDING     // Chờ xử lý
+  CONFIRMED   // Đã xác nhận
+  SHIPPING    // Đang giao
+  COMPLETED   // Hoàn thành
+  CANCELLED   // Đã hủy
+}
+
+enum PaymentMethod {
+  CASH
+  BANK_TRANSFER
+  E_WALLET
+}
+
+model Order {
+  id              String         @id @default(cuid())
+  code            String         // DH-YYYYMMDD-NN
+  storeId         String
+  partnerId       String?        // Khách hàng
+  customerName    String
+  customerPhone   String?
+  customerAddress String?
+  note            String?
+  paymentMethod   PaymentMethod  @default(CASH)
+  status          OrderStatus    @default(PENDING)
+  subtotal        BigInt         @default(0) // Tạm tính
+  discountAmount  BigInt         @default(0) // Giảm từ voucher
+  shippingFee     BigInt         @default(0) // Phí ship
+  totalAmount     BigInt         @default(0) // Tổng cộng
+  voucherCode     String?
+  isPosOrder      Boolean        @default(false)
+  createdBy       String?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  store           Store          @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  partner         Partner?       @relation(fields: [partnerId], references: [id], onDelete: SetNull)
+  items           OrderItem[]
+  reviews         Review[]
+
+  @@unique([storeId, code])
+  @@index([storeId, createdAt])
+  @@map("orders")
+}
+
+model OrderItem {
+  id             String          @id @default(cuid())
+  orderId        String
+  variantId      String?
+  productName    String
+  variantName    String?
+  quantity       Int
+  unitPrice      BigInt
+  discountAmount BigInt          @default(0)
+  totalPrice     BigInt
+
+  order          Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  variant        ProductVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+
+  @@map("order_items")
+}
+
+enum VoucherType {
+  PERCENT
+  FIXED_AMOUNT
+}
+
+model Voucher {
+  id            String      @id @default(cuid())
+  storeId       String
+  code          String
+  type          VoucherType @default(PERCENT)
+  discountValue BigInt      // % hoặc số tiền VND
+  maxDiscount   BigInt?     // Giảm tối đa nếu là %
+  minOrderValue BigInt      @default(0)
+  usageLimit    Int         @default(100)
+  usedCount     Int         @default(0)
+  startDate     DateTime
+  endDate       DateTime
+  isActive      Boolean     @default(true)
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  store         Store       @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@unique([storeId, code])
+  @@map("vouchers")
+}
+
+model Review {
+  id         String   @id @default(cuid())
+  productId  String?
+  orderId    String?
+  authorName String
+  rating     Int      @default(5) // 1 - 5 sao
+  content    String?
+  reply      String?
+  isVisible  Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  product    Product? @relation(fields: [productId], references: [id], onDelete: Cascade)
+  order      Order?   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@map("reviews")
+}
+
+// ----------------------------------------------------
+// 7. NHẬP HÀNG, XUẤT HÀNG, TRẢ HÀNG & KIỂM KÊ
+// ----------------------------------------------------
+
+enum DocumentStatus {
+  DRAFT       // Nháp / Lưu tạm / Chờ duyệt
+  APPROVED    // Đã duyệt / Hoàn thành
+  CANCELLED   // Đã hủy
+}
+
+model StockReceipt {
+  id          String             @id @default(cuid())
+  code        String             // PNH-YYYYMMDD-NN hoặc PNK-YYYYMMDD-NN
+  storeId     String
+  supplierId  String?
+  receiptDate DateTime           @default(now())
+  note        String?
+  status      DocumentStatus     @default(DRAFT)
+  totalAmount BigInt             @default(0)
+  createdBy   String?
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  store       Store              @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  supplier    Partner?           @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+  items       StockReceiptItem[]
+
+  @@unique([storeId, code])
+  @@map("stock_receipts")
+}
+
+model StockReceiptItem {
+  id             String          @id @default(cuid())
+  receiptId      String
+  variantId      String?
+  materialId     String?
+  locationId     String?
+  quantity       Int
+  unitCost       BigInt
+  discountRate   Float           @default(0) // % chiết khấu NCC
+  totalAmount    BigInt
+  batchNumber    String?         // Số lô (kho DN)
+  expiryDate     DateTime?       // Hạn dùng
+
+  receipt        StockReceipt    @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+  variant        ProductVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+  material       Material?       @relation(fields: [materialId], references: [id], onDelete: SetNull)
+
+  @@map("stock_receipt_items")
+}
+
+enum IssueType {
+  PRODUCTION    // Xuất sản xuất
+  CUSTOMER      // Xuất giao khách
+  DISPOSE       // Xuất hủy
+  TRANSFER      // Chuyển kho
+  RETURN_VENDOR // Trả hàng NCC
+}
+
+model StockIssue {
+  id          String           @id @default(cuid())
+  code        String           // PXH-..., PXK-..., PRH-...
+  storeId     String
+  issueType   IssueType        @default(DISPOSE)
+  issueDate   DateTime         @default(now())
+  note        String?
+  workshop    String?          // VD: Xưởng May 1
+  status      DocumentStatus   @default(DRAFT)
+  totalAmount BigInt           @default(0)
+  createdBy   String?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  store       Store            @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  items       StockIssueItem[]
+
+  @@unique([storeId, code])
+  @@map("stock_issues")
+}
+
+model StockIssueItem {
+  id          String          @id @default(cuid())
+  issueId     String
+  variantId   String?
+  materialId  String?
+  locationId  String?
+  quantity    Int
+  unitCost    BigInt          @default(0)
+  totalAmount BigInt          @default(0)
+
+  issue       StockIssue      @relation(fields: [issueId], references: [id], onDelete: Cascade)
+  variant     ProductVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+  material    Material?       @relation(fields: [materialId], references: [id], onDelete: SetNull)
+
+  @@map("stock_issue_items")
+}
+
+model StockAudit {
+  id          String           @id @default(cuid())
+  code        String           // PKK-YYYYMMDD-NN
+  storeId     String
+  auditDate   DateTime         @default(now())
+  note        String?
+  status      DocumentStatus   @default(DRAFT)
+  totalVarianceValue BigInt    @default(0)
+  createdBy   String?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  store       Store            @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  items       StockAuditItem[]
+
+  @@unique([storeId, code])
+  @@map("stock_audits")
+}
+
+model StockAuditItem {
+  id          String          @id @default(cuid())
+  auditId     String
+  variantId   String?
+  materialId  String?
+  systemQty   Int             // Tồn hệ thống lúc chốt phiếu
+  actualQty   Int             // Tồn thực tế kiểm đếm
+  variance    Int             // actual - system
+  varianceValue BigInt        @default(0)
+  reason      String?         // Lý do chênh lệch
+
+  audit       StockAudit      @relation(fields: [auditId], references: [id], onDelete: Cascade)
+  variant     ProductVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+  material    Material?       @relation(fields: [materialId], references: [id], onDelete: SetNull)
+
+  @@map("stock_audit_items")
+}
+
+// ----------------------------------------------------
+// 8. THÔNG BÁO & NHẬT KÝ HOẠT ĐỘNG
+// ----------------------------------------------------
+
+enum NotificationType {
+  LOW_STOCK
+  NEW_ORDER
+  PENDING_DOCUMENT
+  GENERAL
+}
+
+model Notification {
+  id        String           @id @default(cuid())
+  storeId   String
+  title     String
+  message   String
+  type      NotificationType @default(GENERAL)
+  isRead    Boolean          @default(false)
+  linkUrl   String?
+  createdAt DateTime         @default(now())
+
+  store     Store            @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@index([storeId, isRead])
+  @@map("notifications")
+}
+
+model ActivityLog {
+  id        String   @id @default(cuid())
+  storeId   String
+  userId    String?
+  action    String   // CREATE, UPDATE, APPROVE, CANCEL, DELETE
+  entity    String   // ORDER, RECEIPT, ISSUE, AUDIT, PRODUCT...
+  entityId  String?
+  details   String?
+  createdAt DateTime @default(now())
+
+  store     Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([storeId, createdAt])
+  @@map("activity_logs")
+}

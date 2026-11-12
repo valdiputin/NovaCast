@@ -1,36 +1,79 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# NovaCast — Quản Lý Cửa Hàng Thông Minh
 
-## Getting Started
+Hệ thống quản lý bán hàng và kho vận đa loại hình:
+1. **Cửa hàng đồ ăn (F&B)**: Combo, món lẻ, định lượng nguyên liệu, voucher, đơn giao hàng, đánh giá.
+2. **Cửa hàng bán lẻ (Retail)**: Biến thể size/màu, mã vạch, POS tại quầy, nhập hàng từ NCC, trả hàng & chuyển kho, kiểm kê mobile.
+3. **Kho doanh nghiệp (Warehouse)**: Nguyên vật liệu, bán thành phẩm, thành phẩm, vị trí kệ Bin, phiếu nhập/xuất, cân bằng kho.
 
-First, run the development server:
+---
 
+## 1. Yêu Cầu Môi Trường
+- Node.js >= 20.x
+- npm >= 10.x
+- Cơ sở dữ liệu: PostgreSQL (Neon Serverless hoặc PostgreSQL Local)
+
+---
+
+## 2. Hướng Dẫn Cài Đặt & Chạy Local
+
+### Bước 1: Cài đặt dependencies
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+cd F:\web\novacast
+npm install
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### Bước 2: Thiết lập biến môi trường
+Tạo file `.env` từ `.env.example`:
+```env
+DATABASE_URL="postgresql://user:password@host/neondb?sslmode=require"
+DIRECT_URL="postgresql://user:password@host/neondb?sslmode=require"
+AUTH_SECRET="your-32-character-secret-key-goes-here"
+BLOB_READ_WRITE_TOKEN="your_vercel_blob_token"
+RESEND_API_KEY="your_resend_api_key"
+OTP_REQUIRED=false
+TZ="Asia/Ho_Chi_Minh"
+```
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### Bước 3: Chạy migration & seed dữ liệu
+```bash
+npx prisma migrate dev --name init
+npx prisma db seed
+```
+*Tài khoản quản trị demo sau khi seed:*
+- **SĐT / Email**: `0900000000` / `admin@novacast.local`
+- **Mật khẩu**: `admin123`
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+### Bước 4: Chạy môi trường phát triển
+```bash
+npm run dev
+```
+Truy cập `http://localhost:3000`.
 
-## Learn More
+### Bước 5: Chạy kiểm thử tự động
+```bash
+npm run test
+```
 
-To learn more about Next.js, take a look at the following resources:
+---
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## 3. Hướng Dẫn Deploy Lên Vercel
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+1. **Đẩy mã nguồn lên Git Repository** (GitHub / GitLab / Bitbucket).
+2. **Tạo Project trên Vercel**:
+   - Chọn Import repository `novacast`.
+   - Trong tab **Storage**, kết nối **Neon Postgres** (biến `DATABASE_URL` và `POSTGRES_URL_NON_POOLING` sẽ được tự động thiết lập).
+   - Thêm storage **Blob** (biến `BLOB_READ_WRITE_TOKEN` được tự động cấp).
+3. **Cấu hình Environment Variables trên Vercel Dashboard**:
+   - `DIRECT_URL`: Connection string không pooling tới Neon.
+   - `AUTH_SECRET`: Khóa bí mật JWT tối thiểu 32 ký tự.
+   - `RESEND_API_KEY`: API key gửi OTP từ Resend (tùy chọn).
+   - `OTP_REQUIRED`: `true` (nếu muốn bắt buộc OTP khi đăng nhập) hoặc `false`.
+   - `TZ`: `Asia/Ho_Chi_Minh`.
+4. **Cấu hình Build & Output Settings**:
+   - Build Command: `npx prisma migrate deploy && next build`
+   - Install Command: `npm install`
+5. **Deploy**:
+   - Nhấn **Deploy**. Sau khi deploy thành công, chạy seed một lần vào database production từ máy dev:
+     ```bash
+     DATABASE_URL="<production_db_url>" npx tsx prisma/seed.ts
+     ```
