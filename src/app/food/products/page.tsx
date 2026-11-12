@@ -3,7 +3,7 @@ import { getCurrentStore } from "@/lib/auth";
 import { Header } from "@/components/layout/Header";
 import { StatusPill } from "@/components/ui/common";
 import { formatCurrency } from "@/lib/format";
-import { revalidatePath } from "next/cache";
+import { updateProductDiscountAction } from "@/app/actions/inventory";
 
 export const dynamic = "force-dynamic";
 
@@ -15,18 +15,6 @@ export default async function FoodProductsPage() {
     include: { category: true },
     orderBy: { createdAt: "desc" },
   });
-
-  async function updateDiscountAction(formData: FormData) {
-    "use server";
-    const productId = formData.get("productId") as string;
-    const discount = Number(formData.get("discount") || 0);
-
-    await prisma.product.update({
-      where: { id: productId },
-      data: { discountPercent: discount },
-    });
-    revalidatePath("/food/products");
-  }
 
   return (
     <div className="flex-1 flex flex-col">
@@ -69,12 +57,16 @@ export default async function FoodProductsPage() {
                       </td>
                       <td className="py-3.5 px-4">{p.category?.name ?? "Chưa phân loại"}</td>
                       <td className="py-3.5 px-4">
-                        <form action={updateDiscountAction}>
-                          <input type="hidden" name="productId" value={p.id} />
+                        <form
+                          action={async (formData) => {
+                            "use server";
+                            const discount = Number(formData.get("discount") || 0);
+                            await updateProductDiscountAction(p.id, discount);
+                          }}
+                        >
                           <select
                             name="discount"
                             defaultValue={p.discountPercent}
-                            // Form submit on change
                             className="px-2.5 py-1.5 rounded-lg border border-slate-200 text-xs font-semibold bg-white text-slate-700"
                           >
                             <option value={0}>Không giảm</option>

@@ -90,6 +90,7 @@ export class InventoryService {
   /**
    * Xuất kho / Bán hàng (ISSUE / SALE / DISPOSE)
    * Sử dụng atomic update có điều kiện trên cả StockLevel và Variant/Material chống race condition
+   * Chặn hoàn toàn bán từ vị trí DAMAGED (hàng lỗi)
    */
   static async recordIssue(
     tx: Prisma.TransactionClient,
@@ -103,7 +104,14 @@ export class InventoryService {
       where: { id: input.locationId },
       select: { kind: true },
     });
-    const kind = loc?.kind ?? LocationKind.WAREHOUSE;
+    if (!loc) throw new Error("Không tìm thấy vị trí kho xuất");
+
+    // Nếu là đơn hàng bán (SALE) mà chọn vị trí DAMAGED -> CHẶN
+    if (input.type === MovementType.SALE && loc.kind === LocationKind.DAMAGED) {
+      throw new Error("Không được phép xuất bán hàng từ vị trí Hàng Lỗi");
+    }
+
+    const kind = loc.kind;
 
     // 1. Trừ nguyên tử tại vị trí cụ thể (chống âm tồn kho tại vị trí)
     const levelUpdate = await tx.stockLevel.updateMany({
