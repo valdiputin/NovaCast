@@ -7,8 +7,9 @@ generator client {
 
 datasource db {
   provider  = "postgresql"
+  // Vercel + Neon: DATABASE_URL = kết nối pooled (dùng khi chạy app).
+  // Migration chạy bằng kết nối trực tiếp: script vercel-build đặt DATABASE_URL = DATABASE_URL_UNPOOLED cho riêng bước migrate.
   url       = env("DATABASE_URL")
-  directUrl = env("DIRECT_URL")
 }
 
 // ----------------------------------------------------

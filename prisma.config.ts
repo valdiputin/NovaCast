@@ -1,6 +1,4 @@
-// Cấu hình Prisma. Kết nối DB lấy từ schema.prisma:
-//   url       = DATABASE_URL (Neon pooled — dùng khi chạy app)
-//   directUrl = DIRECT_URL   (Neon unpooled — dùng cho migrate/seed)
+// Cấu hình Prisma. Kết nối DB: DATABASE_URL (xem schema.prisma và script vercel-build)
 import "dotenv/config";
 import { defineConfig } from "prisma/config";
 

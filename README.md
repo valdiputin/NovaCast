@@ -26,12 +26,8 @@ npm install
 Tạo file `.env` từ `.env.example`:
 ```env
 DATABASE_URL="postgresql://user:password@host/neondb?sslmode=require"
-DIRECT_URL="postgresql://user:password@host/neondb?sslmode=require"
 AUTH_SECRET="your-32-character-secret-key-goes-here"
-BLOB_READ_WRITE_TOKEN="your_vercel_blob_token"
-RESEND_API_KEY="your_resend_api_key"
 OTP_REQUIRED=false
-TZ="Asia/Ho_Chi_Minh"
 ```
 
 ### Bước 3: Chạy migration & seed dữ liệu
@@ -57,7 +53,7 @@ npm run test
 Không có `TEST_DATABASE_URL` thì chỉ chạy unit test; test tích hợp (`src/lib/inventory.integration.test.ts`) được bỏ qua.
 Để chạy test tích hợp trên PostgreSQL thật (nên dùng **database riêng**, ví dụ một Neon branch), PowerShell:
 ```powershell
-$env:DATABASE_URL="postgresql://.../novacast_test"; $env:DIRECT_URL=$env:DATABASE_URL
+$env:DATABASE_URL="postgresql://.../novacast_test"
 npx prisma migrate deploy
 $env:TEST_DATABASE_URL=$env:DATABASE_URL; npm run test
 ```
@@ -72,20 +68,17 @@ Sau mỗi bước sổ cái `stock_movements` = tổng `stock_levels` = cache t�
 1. **Đẩy mã nguồn lên Git Repository** (GitHub / GitLab / Bitbucket).
 2. **Tạo Project trên Vercel**:
    - Chọn Import repository `novacast`.
-   - Trong tab **Storage**, kết nối **Neon Postgres** (biến `DATABASE_URL` và `POSTGRES_URL_NON_POOLING` sẽ được tự động thiết lập).
-   - Thêm storage **Blob** (biến `BLOB_READ_WRITE_TOKEN` được tự động cấp).
-3. **Cấu hình Environment Variables trên Vercel Dashboard**:
-   - `DIRECT_URL`: Connection string không pooling tới Neon.
-   - `AUTH_SECRET`: Khóa bí mật JWT tối thiểu 32 ký tự.
-   - `RESEND_API_KEY`: API key gửi OTP từ Resend (tùy chọn).
-   - `OTP_REQUIRED`: `true` (nếu muốn bắt buộc OTP khi đăng nhập) hoặc `false`.
-   - Không cần đặt `TZ`: ngày giờ hiển thị và mã phiếu luôn tính theo giờ Việt Nam trong code (`src/lib/date.ts`).
-4. **Cấu hình Build & Output Settings**:
-   - Build Command: `npx prisma migrate deploy && next build`
-   - Install Command: `npm install`
+   - Trong tab **Storage**, kết nối **Neon Postgres** (Vercel tự thêm `DATABASE_URL` và `DATABASE_URL_UNPOOLED`).
+3. **Cấu hình Environment Variables trên Vercel Dashboard** (loại Secret):
+   - `AUTH_SECRET`: chuỗi ngẫu nhiên tối thiểu 32 ký tự.
+   - `OTP_REQUIRED`: `true` (bắt buộc OTP khi đăng nhập) hoặc `false`.
+   - Không cần đặt `TZ`: ngày giờ luôn tính theo giờ Việt Nam trong code (`src/lib/date.ts`).
+4. **Build & Output Settings**: để mặc định — Vercel tự chạy script `vercel-build`
+   (`prisma generate` → `prisma migrate deploy` bằng `DATABASE_URL_UNPOOLED` → `next build`).
 5. **Deploy**:
-   - Nhấn **Deploy**. Sau khi deploy thành công, chạy seed một lần vào database production từ máy dev:
+   - Nhấn **Deploy**. Sau khi deploy thành công, chạy seed một lần vào database production từ máy dev
+     (dùng chuỗi `DATABASE_URL_UNPOOLED` — lấy ở Storage → database → .env.local → Show secret):
      ```powershell
-     $env:DATABASE_URL="<production_db_url>"; $env:DIRECT_URL=$env:DATABASE_URL; npx prisma db seed
+     $env:DATABASE_URL="<DATABASE_URL_UNPOOLED>"; npx prisma db seed
      ```
      Sau khi seed, **đổi mật khẩu tài khoản admin** (`admin123` là mật khẩu demo công khai trong mã nguồn).
