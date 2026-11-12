@@ -121,14 +121,21 @@ enum MovementType {
   DISPOSE       // Xuất hủy hàng hỏng
 }
 
+enum LocationKind {
+  SHELF       // Kệ trưng bày bán lẻ
+  WAREHOUSE   // Kho trữ hàng
+  DAMAGED     // Kho hàng lỗi / hàng hỏng
+}
+
 model StockLocation {
-  id        String   @id @default(cuid())
+  id        String       @id @default(cuid())
   storeId   String
-  name      String   // VD: "Kệ A1 - Tầng 2", "Kệ bán lẻ", "Kho tổng", "Hàng lỗi"
+  name      String       // VD: "Kệ A1 - Tầng 2", "Kệ bán lẻ", "Kho tổng", "Hàng lỗi"
+  kind      LocationKind @default(WAREHOUSE)
   code      String?
-  isDefault Boolean  @default(false)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  isDefault Boolean      @default(false)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
 
   store     Store        @relation(fields: [storeId], references: [id], onDelete: Cascade)
   levels    StockLevel[]

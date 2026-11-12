@@ -1,10 +1,10 @@
-import { MovementType, Prisma } from "@prisma/client";
+import { MovementType, Prisma, LocationKind } from "@prisma/client";
 
 export interface StockChangeInput {
   storeId: string;
   variantId?: string;
   materialId?: string;
-  locationId?: string;
+  locationId: string; // Vị trí bắt buộc để ghi nhận sổ cái
   targetLocationId?: string;
   quantity: number;
   type: MovementType;
@@ -33,6 +33,13 @@ export class InventoryService {
       throw new Error("Số lượng nhập kho phải lớn hơn 0");
     }
 
+    const loc = await tx.stockLocation.findUnique({
+      where: { id: input.locationId },
+      select: { kind: true },
+    });
+    const kind = loc?.kind ?? LocationKind.WAREHOUSE;
+
+    // 1. Ghi movement sổ cái
     const movement = await tx.stockMovement.create({
       data: {
         storeId: input.storeId,
@@ -49,34 +56,23 @@ export class InventoryService {
       },
     });
 
-    let isShelf = false;
-    let isDamagedLoc = false;
-    if (input.locationId) {
-      const loc = await tx.stockLocation.findUnique({
-        where: { id: input.locationId },
-        select: { name: true },
-      });
-      if (loc) {
-        const lower = loc.name.toLowerCase();
-        if (lower.includes("kệ") || lower.includes("quầy")) isShelf = true;
-        if (lower.includes("lỗi") || lower.includes("hỏng")) isDamagedLoc = true;
-      }
-      await this.upsertStockLevel(tx, {
-        storeId: input.storeId,
-        locationId: input.locationId,
-        variantId: input.variantId,
-        materialId: input.materialId,
-        delta: input.quantity,
-      });
-    }
+    // 2. Cập nhật tồn vị trí
+    await this.upsertStockLevel(tx, {
+      storeId: input.storeId,
+      locationId: input.locationId,
+      variantId: input.variantId,
+      materialId: input.materialId,
+      delta: input.quantity,
+    });
 
+    // 3. Cập nhật cache variant/material
     if (input.variantId) {
       await tx.productVariant.update({
         where: { id: input.variantId },
         data: {
           totalQty: { increment: input.quantity },
-          shelfQty: isShelf ? { increment: input.quantity } : undefined,
-          warehouseQty: !isShelf && !isDamagedLoc ? { increment: input.quantity } : undefined,
+          shelfQty: kind === LocationKind.SHELF ? { increment: input.quantity } : undefined,
+          warehouseQty: kind === LocationKind.WAREHOUSE ? { increment: input.quantity } : undefined,
         },
       });
     } else if (input.materialId) {
@@ -93,7 +89,7 @@ export class InventoryService {
 
   /**
    * Xuất kho / Bán hàng (ISSUE / SALE / DISPOSE)
-   * Sử dụng atomic update có điều kiện (quantity >= input.quantity) chống race condition
+   * Sử dụng atomic update có điều kiện trên cả StockLevel và Variant/Material chống race condition
    */
   static async recordIssue(
     tx: Prisma.TransactionClient,
@@ -103,84 +99,52 @@ export class InventoryService {
       throw new Error("Số lượng xuất kho phải lớn hơn 0");
     }
 
-    // 1. Kiểm tra tồn kho tại vị trí cụ thể nếu có locationId
-    if (input.locationId) {
-      const locLevel = await tx.stockLevel.findFirst({
-        where: {
-          locationId: input.locationId,
-          variantId: input.variantId ?? null,
-          materialId: input.materialId ?? null,
-        },
-      });
-      if (!locLevel || locLevel.quantity < input.quantity) {
-        throw new Error(
-          `Không đủ hàng tại vị trí này để xuất (hiện có: ${locLevel?.quantity ?? 0}, yêu cầu: ${input.quantity})`
-        );
-      }
+    const loc = await tx.stockLocation.findUnique({
+      where: { id: input.locationId },
+      select: { kind: true },
+    });
+    const kind = loc?.kind ?? LocationKind.WAREHOUSE;
+
+    // 1. Trừ nguyên tử tại vị trí cụ thể (chống âm tồn kho tại vị trí)
+    const levelUpdate = await tx.stockLevel.updateMany({
+      where: {
+        locationId: input.locationId,
+        variantId: input.variantId ?? null,
+        materialId: input.materialId ?? null,
+        quantity: { gte: input.quantity },
+      },
+      data: {
+        quantity: { decrement: input.quantity },
+      },
+    });
+
+    if (levelUpdate.count === 0) {
+      throw new Error(
+        `Không đủ hàng tại vị trí chỉ định để xuất (yêu cầu: ${input.quantity})`
+      );
     }
 
-    // 2. Atomic decrement chống bán vượt tồn đồng thời
+    // 2. Trừ cache variant hoặc material
     if (input.variantId) {
-      const updateResult = await tx.productVariant.updateMany({
-        where: {
-          id: input.variantId,
-          totalQty: { gte: input.quantity },
-        },
+      await tx.productVariant.update({
+        where: { id: input.variantId },
         data: {
           totalQty: { decrement: input.quantity },
+          soldCount: input.type === MovementType.SALE ? { increment: input.quantity } : undefined,
+          shelfQty: kind === LocationKind.SHELF ? { decrement: input.quantity } : undefined,
+          warehouseQty: kind === LocationKind.WAREHOUSE ? { decrement: input.quantity } : undefined,
         },
       });
-
-      if (updateResult.count === 0) {
-        const v = await tx.productVariant.findUnique({
-          where: { id: input.variantId },
-          select: { sku: true, totalQty: true },
-        });
-        throw new Error(
-          `Không đủ tồn kho để xuất mã ${v?.sku ?? input.variantId} (hiện tồn: ${v?.totalQty ?? 0}, yêu cầu: ${input.quantity})`
-        );
-      }
-
-      // Cập nhật shelf/warehouse cache
-      if (input.type === MovementType.SALE) {
-        await tx.productVariant.update({
-          where: { id: input.variantId },
-          data: {
-            soldCount: { increment: input.quantity },
-            shelfQty: { decrement: input.quantity },
-          },
-        });
-      } else {
-        await tx.productVariant.update({
-          where: { id: input.variantId },
-          data: {
-            warehouseQty: { decrement: input.quantity },
-          },
-        });
-      }
     } else if (input.materialId) {
-      const updateResult = await tx.material.updateMany({
-        where: {
-          id: input.materialId,
-          totalQty: { gte: input.quantity },
-        },
+      await tx.material.update({
+        where: { id: input.materialId },
         data: {
           totalQty: { decrement: input.quantity },
         },
       });
-
-      if (updateResult.count === 0) {
-        const m = await tx.material.findUnique({
-          where: { id: input.materialId },
-          select: { sku: true, totalQty: true },
-        });
-        throw new Error(
-          `Không đủ vật tư để xuất mã ${m?.sku ?? input.materialId} (hiện tồn: ${m?.totalQty ?? 0}, yêu cầu: ${input.quantity})`
-        );
-      }
     }
 
-    // 3. Tạo movement
+    // 3. Tạo bản ghi movement sổ cái
     const movement = await tx.stockMovement.create({
       data: {
         storeId: input.storeId,
@@ -197,23 +161,11 @@ export class InventoryService {
       },
     });
 
-    // 4. Giảm stock_levels
-    if (input.locationId) {
-      await this.upsertStockLevel(tx, {
-        storeId: input.storeId,
-        locationId: input.locationId,
-        variantId: input.variantId,
-        materialId: input.materialId,
-        delta: -input.quantity,
-      });
-    }
-
     return movement;
   }
 
   /**
    * Khách trả hàng hoàn kho (RETURN)
-   * Với hàng lỗi: đưa vào location Hàng lỗi, vẫn cộng totalQty để khớp sổ cái movement
    */
   static async recordReturn(
     tx: Prisma.TransactionClient,
@@ -222,6 +174,12 @@ export class InventoryService {
     if (input.quantity <= 0) {
       throw new Error("Số lượng trả hàng phải lớn hơn 0");
     }
+
+    const loc = await tx.stockLocation.findUnique({
+      where: { id: input.locationId },
+      select: { kind: true },
+    });
+    const kind = loc?.kind ?? LocationKind.WAREHOUSE;
 
     const movement = await tx.stockMovement.create({
       data: {
@@ -239,22 +197,21 @@ export class InventoryService {
       },
     });
 
-    if (input.locationId) {
-      await this.upsertStockLevel(tx, {
-        storeId: input.storeId,
-        locationId: input.locationId,
-        variantId: input.variantId,
-        materialId: input.materialId,
-        delta: input.quantity,
-      });
-    }
+    await this.upsertStockLevel(tx, {
+      storeId: input.storeId,
+      locationId: input.locationId,
+      variantId: input.variantId,
+      materialId: input.materialId,
+      delta: input.quantity,
+    });
 
     if (input.variantId) {
       await tx.productVariant.update({
         where: { id: input.variantId },
         data: {
           totalQty: { increment: input.quantity },
-          shelfQty: !input.isDamaged ? { increment: input.quantity } : undefined,
+          shelfQty: kind === LocationKind.SHELF ? { increment: input.quantity } : undefined,
+          warehouseQty: kind === LocationKind.WAREHOUSE ? { increment: input.quantity } : undefined,
           soldCount: !input.isDamaged ? { decrement: input.quantity } : undefined,
         },
       });
@@ -264,7 +221,7 @@ export class InventoryService {
   }
 
   /**
-   * Chuyển kho (TRANSFER)
+   * Chuyển kho (TRANSFER_OUT + TRANSFER_IN)
    */
   static async recordTransfer(
     tx: Prisma.TransactionClient,
@@ -277,14 +234,12 @@ export class InventoryService {
       throw new Error("Vị trí nguồn và đích phải khác nhau");
     }
 
-    // Xuất kho nguồn
     await this.recordIssue(tx, {
       ...input,
       type: MovementType.TRANSFER_OUT,
       refType: "TRANSFER",
     });
 
-    // Nhập kho đích
     await this.recordReceipt(tx, {
       ...input,
       locationId: input.targetLocationId,
@@ -293,7 +248,7 @@ export class InventoryService {
   }
 
   /**
-   * Điều chỉnh / Cân bằng kho sau kiểm kê (ADJUSTMENT)
+   * Điều chỉnh / Cân bằng kho (ADJUSTMENT)
    */
   static async recordAdjustment(
     tx: Prisma.TransactionClient,
@@ -301,7 +256,7 @@ export class InventoryService {
       storeId: string;
       variantId?: string;
       materialId?: string;
-      locationId?: string;
+      locationId: string;
       delta: number;
       refId?: string;
       unitCost?: bigint;
@@ -311,16 +266,11 @@ export class InventoryService {
   ) {
     if (input.delta === 0) return null;
 
-    let isShelf = false;
-    if (input.locationId) {
-      const loc = await tx.stockLocation.findUnique({
-        where: { id: input.locationId },
-        select: { name: true },
-      });
-      if (loc && (loc.name.toLowerCase().includes("kệ") || loc.name.toLowerCase().includes("quầy"))) {
-        isShelf = true;
-      }
-    }
+    const loc = await tx.stockLocation.findUnique({
+      where: { id: input.locationId },
+      select: { kind: true },
+    });
+    const kind = loc?.kind ?? LocationKind.WAREHOUSE;
 
     const movement = await tx.stockMovement.create({
       data: {
@@ -339,23 +289,21 @@ export class InventoryService {
       },
     });
 
-    if (input.locationId) {
-      await this.upsertStockLevel(tx, {
-        storeId: input.storeId,
-        locationId: input.locationId,
-        variantId: input.variantId,
-        materialId: input.materialId,
-        delta: input.delta,
-      });
-    }
+    await this.upsertStockLevel(tx, {
+      storeId: input.storeId,
+      locationId: input.locationId,
+      variantId: input.variantId,
+      materialId: input.materialId,
+      delta: input.delta,
+    });
 
     if (input.variantId) {
       await tx.productVariant.update({
         where: { id: input.variantId },
         data: {
           totalQty: { increment: input.delta },
-          shelfQty: isShelf ? { increment: input.delta } : undefined,
-          warehouseQty: !isShelf ? { increment: input.delta } : undefined,
+          shelfQty: kind === LocationKind.SHELF ? { increment: input.delta } : undefined,
+          warehouseQty: kind === LocationKind.WAREHOUSE ? { increment: input.delta } : undefined,
         },
       });
     } else if (input.materialId) {
@@ -371,7 +319,7 @@ export class InventoryService {
   }
 
   /**
-   * Đảo ngược movement đầy đủ khi hủy phiếu đã duyệt
+   * Đảo ngược movement hợp lệ, chặn hủy lặp lại
    */
   static async reverseMovement(
     tx: Prisma.TransactionClient,
@@ -384,50 +332,42 @@ export class InventoryService {
     });
     if (!original) throw new Error("Không tìm thấy movement để đảo ngược");
 
+    // Kiểm tra đã bị đảo ngược chưa
+    const alreadyReversed = await tx.stockMovement.findFirst({
+      where: { refType: `CANCEL_${original.refType ?? "DOC"}`, refId: original.id },
+    });
+    if (alreadyReversed) {
+      throw new Error("Movement này đã được đảo ngược trước đó rồi");
+    }
+
     const reverseChange = -original.quantityChange;
-
-    // Kiểm tra không để âm tồn khi đảo ngược
-    if (reverseChange < 0) {
-      if (original.variantId) {
-        const v = await tx.productVariant.findUnique({
-          where: { id: original.variantId },
-          select: { totalQty: true, sku: true },
-        });
-        if (v && v.totalQty < Math.abs(reverseChange)) {
-          throw new Error(
-            `Không thể hủy movement: gây âm tồn cho ${v.sku} (tồn hiện tại ${v.totalQty}, cần đảo ngược ${Math.abs(reverseChange)})`
-          );
-        }
-      } else if (original.materialId) {
-        const m = await tx.material.findUnique({
-          where: { id: original.materialId },
-          select: { totalQty: true, sku: true },
-        });
-        if (m && m.totalQty < Math.abs(reverseChange)) {
-          throw new Error(
-            `Không thể hủy movement: gây âm tồn cho vật tư ${m.sku}`
-          );
-        }
-      }
+    const targetLocId = original.toLocationId ?? original.fromLocationId;
+    if (!targetLocId) {
+      throw new Error("Không thể đảo ngược movement không có thông tin vị trí");
     }
 
-    // Đảo ngược location
-    const targetLoc = original.toLocationId ?? original.fromLocationId;
-    if (targetLoc) {
-      await this.upsertStockLevel(tx, {
-        storeId: original.storeId,
-        locationId: targetLoc,
-        variantId: original.variantId ?? undefined,
-        materialId: original.materialId ?? undefined,
-        delta: reverseChange,
-      });
-    }
+    const loc = await tx.stockLocation.findUnique({
+      where: { id: targetLocId },
+      select: { kind: true },
+    });
+    const kind = loc?.kind ?? LocationKind.WAREHOUSE;
+
+    // Cập nhật stock level vị trí
+    await this.upsertStockLevel(tx, {
+      storeId: original.storeId,
+      locationId: targetLocId,
+      variantId: original.variantId ?? undefined,
+      materialId: original.materialId ?? undefined,
+      delta: reverseChange,
+    });
 
     if (original.variantId) {
       await tx.productVariant.update({
         where: { id: original.variantId },
         data: {
           totalQty: { increment: reverseChange },
+          shelfQty: kind === LocationKind.SHELF ? { increment: reverseChange } : undefined,
+          warehouseQty: kind === LocationKind.WAREHOUSE ? { increment: reverseChange } : undefined,
           soldCount: original.type === MovementType.SALE ? { decrement: Math.abs(reverseChange) } : undefined,
         },
       });
@@ -445,10 +385,12 @@ export class InventoryService {
         storeId: original.storeId,
         variantId: original.variantId,
         materialId: original.materialId,
+        fromLocationId: reverseChange < 0 ? targetLocId : undefined,
+        toLocationId: reverseChange > 0 ? targetLocId : undefined,
         quantityChange: reverseChange,
-        type: original.type,
+        type: MovementType.ADJUSTMENT,
         refType: `CANCEL_${original.refType ?? "DOC"}`,
-        refId: original.refId,
+        refId: original.id,
         unitCost: original.unitCost,
         note: `Đảo ngược ${original.id}: ${cancelReason}`,
         createdBy: cancelledBy,
@@ -457,8 +399,8 @@ export class InventoryService {
   }
 
   /**
-   * Hàm đối soát (Reconcile) chứng minh tính nhất quán:
-   * SUM(stock_movements.quantityChange) = SUM(stock_levels.quantity) = totalQty
+   * Reconcile chuẩn xác:
+   * SUM(stock_movements.quantityChange) === SUM(stock_levels.quantity) === totalQty
    */
   static async reconcile(
     tx: Prisma.TransactionClient,
@@ -501,7 +443,7 @@ export class InventoryService {
       movementSum: moveSum,
       levelSum: levelSum,
       cachedTotal: cachedTotal,
-      isBalanced: moveSum === cachedTotal && (levelSum === 0 || levelSum === cachedTotal),
+      isBalanced: moveSum === levelSum && levelSum === cachedTotal,
     };
   }
 

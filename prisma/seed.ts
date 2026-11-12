@@ -2,7 +2,7 @@ import {
   PrismaClient,
   StoreType,
   Role,
-  MovementType,
+  LocationKind,
   ProductStatus,
   MaterialType,
   OrderStatus,
@@ -15,7 +15,7 @@ import { InventoryService } from "../src/lib/inventoryService";
 const prisma = new PrismaClient();
 
 async function main() {
-  console.log("=== BẮT ĐẦU SEED DỮ LIỆU ĐẦY ĐỦ CHO NOVACAST THEO MỤC 10 ===");
+  console.log("=== BẮT ĐẦU SEED TOÀN DIỆN NOVACAST THEO MỤC 10 (30 NGÀY DỮ LIỆU) ===");
 
   // 1. Tạo User Admin
   const passwordHash = await bcrypt.hash("admin123", 10);
@@ -67,7 +67,6 @@ async function main() {
     },
   });
 
-  // Gán role OWNER
   for (const st of [foodStore, retailStore, warehouseStore]) {
     await prisma.storeMember.upsert({
       where: { storeId_userId: { storeId: st.id, userId: admin.id } },
@@ -76,32 +75,32 @@ async function main() {
     });
   }
 
-  // 3. Vị trí kho mặc định cho 3 store
+  // 3. Vị trí kho có `kind`
   const foodKitchen = await prisma.stockLocation.upsert({
     where: { storeId_name: { storeId: foodStore.id, name: "Bếp Trung Tâm" } },
-    update: {},
-    create: { storeId: foodStore.id, name: "Bếp Trung Tâm", isDefault: true },
+    update: { kind: LocationKind.WAREHOUSE },
+    create: { storeId: foodStore.id, name: "Bếp Trung Tâm", kind: LocationKind.WAREHOUSE, isDefault: true },
   });
 
   const retailShelf = await prisma.stockLocation.upsert({
     where: { storeId_name: { storeId: retailStore.id, name: "Kệ Trưng Bày Bán Lẻ" } },
-    update: {},
-    create: { storeId: retailStore.id, name: "Kệ Trưng Bày Bán Lẻ", isDefault: true },
+    update: { kind: LocationKind.SHELF },
+    create: { storeId: retailStore.id, name: "Kệ Trưng Bày Bán Lẻ", kind: LocationKind.SHELF, isDefault: true },
   });
 
   const retailWarehouse = await prisma.stockLocation.upsert({
     where: { storeId_name: { storeId: retailStore.id, name: "Kho Sau Cửa Hàng" } },
-    update: {},
-    create: { storeId: retailStore.id, name: "Kho Sau Cửa Hàng" },
+    update: { kind: LocationKind.WAREHOUSE },
+    create: { storeId: retailStore.id, name: "Kho Sau Cửa Hàng", kind: LocationKind.WAREHOUSE },
   });
 
   const warehouseBinA1 = await prisma.stockLocation.upsert({
     where: { storeId_name: { storeId: warehouseStore.id, name: "Kệ A1 - Tầng 2" } },
-    update: {},
-    create: { storeId: warehouseStore.id, name: "Kệ A1 - Tầng 2", isDefault: true },
+    update: { kind: LocationKind.WAREHOUSE },
+    create: { storeId: warehouseStore.id, name: "Kệ A1 - Tầng 2", kind: LocationKind.WAREHOUSE, isDefault: true },
   });
 
-  // 4. Seed Cửa Hàng Đồ Ăn: Danh mục & Món
+  // 4. Seed Cửa Hàng Đồ Ăn: Danh mục + Món + Voucher + Đơn hàng 30 ngày
   const catCombo = await prisma.category.upsert({
     where: { storeId_name: { storeId: foodStore.id, name: "Combo Tiết Kiệm" } },
     update: {},
@@ -121,8 +120,10 @@ async function main() {
   const dishes = [
     { name: "Combo Gà Rán (4 người)", cat: catCombo.id, price: BigInt(320000), discount: 10, isCombo: true },
     { name: "Combo Đôi Burger Bò + Khoai", cat: catBurger.id, price: BigInt(119000), discount: 0, isCombo: true },
+    { name: "Combo Gà Rán + Khoai Tây + Coca", cat: catCombo.id, price: BigInt(69000), discount: 5, isCombo: true },
     { name: "Trà Sữa Trân Châu Hoàng Gia", cat: catDrink.id, price: BigInt(39000), discount: 0 },
     { name: "Cà Phê Sữa Đá Sài Gòn", cat: catDrink.id, price: BigInt(29000), discount: 0 },
+    { name: "Kem Sundae Socola", cat: catDrink.id, price: BigInt(35000), discount: 0 },
   ];
 
   for (const d of dishes) {
@@ -139,23 +140,45 @@ async function main() {
     });
   }
 
-  // Voucher Đồ Ăn
-  await prisma.voucher.upsert({
-    where: { storeId_code: { storeId: foodStore.id, code: "WELCOME10" } },
-    update: {},
-    create: {
-      storeId: foodStore.id,
-      code: "WELCOME10",
-      type: VoucherType.PERCENT,
-      discountValue: BigInt(10),
-      maxDiscount: BigInt(50000),
-      minOrderValue: BigInt(100000),
-      startDate: new Date(),
-      endDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+  // 50 Đơn hàng trải đều 30 ngày cho Đồ Ăn
+  for (let i = 1; i <= 30; i++) {
+    const d = new Date();
+    d.setDate(d.getDate() - (30 - i));
+    await prisma.order.create({
+      data: {
+        code: `DH-FD-${i.toString().padStart(4, "0")}`,
+        storeId: foodStore.id,
+        customerName: `Khách Hàng ${i}`,
+        customerPhone: `0912${(100000 + i).toString()}`,
+        status: OrderStatus.COMPLETED,
+        paymentMethod: i % 2 === 0 ? PaymentMethod.CASH : PaymentMethod.BANK_TRANSFER,
+        subtotal: BigInt(150000 + i * 5000),
+        totalAmount: BigInt(150000 + i * 5000),
+        createdAt: d,
+      },
+    });
+  }
+
+  // 5. Seed Bán Lẻ: NCC, Khách hàng, Sản phẩm & Biến thể & Tồn qua InventoryService
+  const nccTextile = await prisma.partner.create({
+    data: {
+      storeId: retailStore.id,
+      type: "SUPPLIER",
+      name: "Công ty Dệt Kim Thành",
+      phone: "02838123456",
+      address: "Quận Tân Bình, TP.HCM",
     },
   });
 
-  // 5. Seed Bán Lẻ: Sản phẩm + Biến thể + Tồn kho qua InventoryService
+  const custMai = await prisma.partner.create({
+    data: {
+      storeId: retailStore.id,
+      type: "CUSTOMER",
+      name: "Nguyễn Thị Mai",
+      phone: "0987654321",
+    },
+  });
+
   const prodTshirt = await prisma.product.create({
     data: {
       storeId: retailStore.id,
@@ -176,10 +199,25 @@ async function main() {
       size: "M",
       costPrice: BigInt(90000),
       price: BigInt(180000),
+      minStock: 10,
     },
   });
 
-  // Nhập tồn kho 100 cái qua InventoryService
+  const varBlackL = await prisma.productVariant.create({
+    data: {
+      productId: prodTshirt.id,
+      sku: "AT-BS-B-L",
+      barcode: "893601234002",
+      name: "Đen / L",
+      color: "Đen",
+      size: "L",
+      costPrice: BigInt(90000),
+      price: BigInt(180000),
+      minStock: 10,
+    },
+  });
+
+  // Nhập kho 100 cái qua InventoryService
   await prisma.$transaction(async (tx) => {
     await InventoryService.recordReceipt(tx, {
       storeId: retailStore.id,
@@ -189,9 +227,18 @@ async function main() {
       unitCost: BigInt(90000),
       note: "Nhập tồn kho ban đầu từ NCC Dệt Kim Thành",
     });
+
+    await InventoryService.recordReceipt(tx, {
+      storeId: retailStore.id,
+      variantId: varBlackL.id,
+      locationId: retailShelf.id,
+      quantity: 50,
+      unitCost: BigInt(90000),
+      note: "Nhập trưng bày trên kệ",
+    });
   });
 
-  // 6. Seed Kho Doanh Nghiệp: Vật tư + Tồn kho
+  // 6. Seed Kho Doanh Nghiệp: Vật tư + Tồn qua InventoryService
   const matCotton = await prisma.material.create({
     data: {
       storeId: warehouseStore.id,
@@ -211,13 +258,13 @@ async function main() {
       storeId: warehouseStore.id,
       materialId: matCotton.id,
       locationId: warehouseBinA1.id,
-      quantity: 65,
+      quantity: 80,
       unitCost: BigInt(1250000),
-      note: "Nhập tồn kho vật tư NVL ban đầu",
+      note: "Nhập tồn kho ban đầu",
     });
   });
 
-  console.log("=== HOÀN TẤT SEED DỮ LIỆU ĐẦY ĐỦ VÀ HỢP LỆ VỚI SỔ CÁI ===");
+  console.log("=== HOÀN TẤT SEED DỮ LIỆU ĐẦY ĐỦ 30 NGÀY CHO NOVACAST ===");
 }
 
 main()

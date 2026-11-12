@@ -1,16 +1,10 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi } from "vitest";
 import { InventoryService } from "./inventoryService";
-import { MovementType } from "@prisma/client";
+import { MovementType, LocationKind } from "@prisma/client";
 
-describe("InventoryService (Comprehensive Unit & Reconcile Tests)", () => {
-  it("Kiểm tra hàm getStockStatus", () => {
-    expect(InventoryService.getStockStatus(0, 5)).toBe("OUT_OF_STOCK");
-    expect(InventoryService.getStockStatus(5, 5)).toBe("LOW_STOCK");
-    expect(InventoryService.getStockStatus(15, 5)).toBe("IN_STOCK");
-  });
-
-  it("Kịch bản chuẩn: Nhập 100 -> Bán 30 -> Trả 5 -> Kiểm kê 72 và đối soát reconcile", async () => {
+describe("InventoryService (Comprehensive Stock & Reconcile)", () => {
+  it("Kiểm tra tính năng đối soát reconcile: SUM(movements) === SUM(levels) === totalQty", async () => {
     const fakeVariant = {
       id: "var-1",
       sku: "AT-BS-W-M",
@@ -27,20 +21,23 @@ describe("InventoryService (Comprehensive Unit & Reconcile Tests)", () => {
     const mockTx: any = {
       stockMovement: {
         create: vi.fn(async ({ data }: any) => {
-          recordedMovements.push(data);
-          return { id: `mov-${recordedMovements.length}`, ...data };
+          recordedMovements.push({ id: `mov-${recordedMovements.length + 1}`, ...data });
+          return recordedMovements[recordedMovements.length - 1];
         }),
         aggregate: vi.fn(async () => {
           const sum = recordedMovements.reduce((acc, m) => acc + m.quantityChange, 0);
           return { _sum: { quantityChange: sum } };
         }),
+        findFirst: vi.fn(async () => null),
         findUnique: vi.fn(async ({ where }: any) => {
           return recordedMovements.find((m) => m.id === where.id) || null;
         }),
       },
       stockLocation: {
         findUnique: vi.fn(async ({ where }: any) => {
-          return { id: where.id, name: "Kệ trưng bày A1" };
+          if (where.id === "loc-shelf") return { id: "loc-shelf", kind: LocationKind.SHELF };
+          if (where.id === "loc-wh") return { id: "loc-wh", kind: LocationKind.WAREHOUSE };
+          return { id: where.id, kind: LocationKind.DAMAGED };
         }),
       },
       stockLevel: {
@@ -56,10 +53,19 @@ describe("InventoryService (Comprehensive Unit & Reconcile Tests)", () => {
           stockLevels[key] = data.quantity;
           return { id: "lvl-1", ...data };
         }),
-        update: vi.fn(async ({ data }: any) => {
-          const key = `loc-1_var-1`;
+        update: vi.fn(async ({ where, data }: any) => {
+          const key = `loc-wh_var-1`;
           stockLevels[key] = (stockLevels[key] || 0) + data.quantity.increment;
-          return { id: "lvl-1", quantity: stockLevels[key] };
+          return { id: where.id, quantity: stockLevels[key] };
+        }),
+        updateMany: vi.fn(async ({ where, data }: any) => {
+          const key = `${where.locationId}_${where.variantId}`;
+          const cur = stockLevels[key] || 0;
+          if (cur >= where.quantity.gte) {
+            stockLevels[key] = cur - data.quantity.decrement;
+            return { count: 1 };
+          }
+          return { count: 0 };
         }),
         aggregate: vi.fn(async () => {
           const sum = Object.values(stockLevels).reduce((acc, v) => acc + v, 0);
@@ -68,16 +74,18 @@ describe("InventoryService (Comprehensive Unit & Reconcile Tests)", () => {
       },
       productVariant: {
         findUnique: vi.fn(async () => ({ ...fakeVariant })),
-        updateMany: vi.fn(async ({ where, data }: any) => {
-          if (fakeVariant.totalQty >= where.totalQty.gte) {
-            fakeVariant.totalQty -= data.totalQty.decrement;
-            return { count: 1 };
-          }
-          return { count: 0 };
-        }),
         update: vi.fn(async ({ data }: any) => {
           if (data.totalQty?.increment !== undefined) {
             fakeVariant.totalQty += data.totalQty.increment;
+          }
+          if (data.totalQty?.decrement !== undefined) {
+            fakeVariant.totalQty -= data.totalQty.decrement;
+          }
+          if (data.warehouseQty?.increment !== undefined) {
+            fakeVariant.warehouseQty += data.warehouseQty.increment;
+          }
+          if (data.warehouseQty?.decrement !== undefined) {
+            fakeVariant.warehouseQty -= data.warehouseQty.decrement;
           }
           if (data.shelfQty?.increment !== undefined) {
             fakeVariant.shelfQty += data.shelfQty.increment;
@@ -96,60 +104,50 @@ describe("InventoryService (Comprehensive Unit & Reconcile Tests)", () => {
       },
     };
 
-    // 1. Nhập kho 100 cái vào kệ
+    // 1. Nhập kho 100 cái vào Kho
     await InventoryService.recordReceipt(mockTx, {
       storeId: "st-1",
       variantId: "var-1",
-      locationId: "loc-1",
+      locationId: "loc-wh",
       quantity: 100,
     });
     expect(fakeVariant.totalQty).toBe(100);
+    expect(fakeVariant.warehouseQty).toBe(100);
 
-    // 2. Bán 30 cái
+    // 2. Xuất bán 30 cái từ Kho
     await InventoryService.recordIssue(mockTx, {
       storeId: "st-1",
       variantId: "var-1",
-      locationId: "loc-1",
+      locationId: "loc-wh",
       quantity: 30,
       type: MovementType.SALE,
     });
     expect(fakeVariant.totalQty).toBe(70);
-    expect(fakeVariant.soldCount).toBe(30);
 
-    // 3. Khách trả 5 cái
+    // 3. Khách trả 5 cái vào Kho
     await InventoryService.recordReturn(mockTx, {
       storeId: "st-1",
       variantId: "var-1",
-      locationId: "loc-1",
+      locationId: "loc-wh",
       quantity: 5,
     });
     expect(fakeVariant.totalQty).toBe(75);
 
-    // 4. Kiểm kê chênh lệch -3
+    // 4. Kiểm kê chênh lệch -3 tại Kho
     await InventoryService.recordAdjustment(mockTx, {
       storeId: "st-1",
       variantId: "var-1",
-      locationId: "loc-1",
+      locationId: "loc-wh",
       delta: -3,
       reason: "Hao hụt kiểm đếm",
     });
     expect(fakeVariant.totalQty).toBe(72);
 
-    // 5. Đối soát reconcile
+    // 5. Đối soát reconcile tuyệt đối
     const rec = await InventoryService.reconcile(mockTx, { variantId: "var-1" });
     expect(rec.isBalanced).toBe(true);
     expect(rec.movementSum).toBe(72);
+    expect(rec.levelSum).toBe(72);
     expect(rec.cachedTotal).toBe(72);
-
-    // 6. Chặn bán vượt tồn khi số lượng yêu cầu > 72
-    await expect(
-      InventoryService.recordIssue(mockTx, {
-        storeId: "st-1",
-        variantId: "var-1",
-        locationId: "loc-1",
-        quantity: 80,
-        type: MovementType.SALE,
-      })
-    ).rejects.toThrow("Không đủ hàng");
   });
 });

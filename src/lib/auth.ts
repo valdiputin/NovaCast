@@ -8,38 +8,75 @@ export interface SessionUser {
   fullName: string;
   phone: string;
   email?: string | null;
-  role: string;
+  role: "OWNER" | "MANAGER" | "STAFF";
 }
 
-const SECRET = process.env.AUTH_SECRET || "novacast-secret-super-key-32-chars-long-123456";
+interface SessionPayload {
+  userId: string;
+  exp: number; // timestamp ms
+}
+
+function getSecret(): string {
+  const secret = process.env.AUTH_SECRET;
+  if (!secret || secret.trim().length < 16) {
+    throw new Error("LỖI BẢO MẬT: AUTH_SECRET chưa được cấu hình hoặc quá ngắn trong biến môi trường!");
+  }
+  return secret;
+}
 
 /**
- * Ký session token bằng HMAC-SHA256
+ * Ký session token bằng HMAC-SHA256 kèm thời hạn hết hạn
  */
-export function signSession(userId: string): string {
-  const hmac = crypto.createHmac("sha256", SECRET);
-  hmac.update(userId);
-  const signature = hmac.digest("hex");
-  return `${userId}.${signature}`;
+export function signSession(userId: string, expiresInMs = 7 * 24 * 60 * 60 * 1000): string {
+  const payload: SessionPayload = {
+    userId,
+    exp: Date.now() + expiresInMs,
+  };
+  const payloadStr = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  const hmac = crypto.createHmac("sha256", getSecret());
+  hmac.update(payloadStr);
+  const signature = hmac.digest("base64url");
+  return `${payloadStr}.${signature}`;
 }
 
 /**
- * Xác thực session token đã ký
+ * Xác thực session token đã ký chống tấn công timing và chống crash
  */
 export function verifySession(token: string): string | null {
-  if (!token || !token.includes(".")) return null;
-  const [userId, signature] = token.split(".");
-  const hmac = crypto.createHmac("sha256", SECRET);
-  hmac.update(userId);
-  const expected = hmac.digest("hex");
-  if (crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) {
-    return userId;
+  try {
+    if (!token || !token.includes(".")) return null;
+    const parts = token.split(".");
+    if (parts.length !== 2) return null;
+    const [payloadStr, signature] = parts;
+
+    const hmac = crypto.createHmac("sha256", getSecret());
+    hmac.update(payloadStr);
+    const expected = hmac.digest("base64url");
+
+    const sigBuf = Buffer.from(signature);
+    const expBuf = Buffer.from(expected);
+    if (sigBuf.length !== expBuf.length) return null;
+
+    if (!crypto.timingSafeEqual(sigBuf, expBuf)) {
+      return null;
+    }
+
+    const payload: SessionPayload = JSON.parse(
+      Buffer.from(payloadStr, "base64url").toString("utf-8")
+    );
+
+    if (Date.now() > payload.exp) {
+      return null; // Hết hạn phiên
+    }
+
+    return payload.userId;
+  } catch {
+    return null;
   }
-  return null;
 }
 
 /**
- * Lấy user hiện tại từ cookie đã ký (KHÔNG có fallback admin bừa bãi)
+ * Lấy user hiện tại từ cookie đã ký
  */
 export async function getCurrentUser(): Promise<SessionUser | null> {
   const cookieStore = await cookies();
@@ -56,9 +93,16 @@ export async function getCurrentUser(): Promise<SessionUser | null> {
 
   if (!user) return null;
 
+  // Lấy role cao nhất của user trong các store
+  const member = await prisma.storeMember.findFirst({
+    where: { userId: user.id },
+    select: { role: true },
+    orderBy: { role: "asc" }, // OWNER < MANAGER < STAFF
+  });
+
   return {
     ...user,
-    role: "STAFF", // role theo ngữ cảnh store
+    role: (member?.role as SessionUser["role"]) ?? "STAFF",
   };
 }
 
@@ -82,11 +126,11 @@ export async function getCurrentStore(requiredType?: "FOOD" | "RETAIL" | "WAREHO
       if (requiredType && member.store.type !== requiredType) {
         redirect("/stores");
       }
-      return member.store;
+      return { ...member.store, currentRole: member.role };
     }
   }
 
-  // Nếu chưa chọn hoặc store không hợp lệ, lấy store đầu tiên user thuộc về
+  // Lấy store đầu tiên user thuộc về
   const member = await prisma.storeMember.findFirst({
     where: {
       userId: user.id,
@@ -99,7 +143,7 @@ export async function getCurrentStore(requiredType?: "FOOD" | "RETAIL" | "WAREHO
     redirect("/stores");
   }
 
-  return member.store;
+  return { ...member.store, currentRole: member.role };
 }
 
 export async function setSessionCookie(userId: string) {
@@ -110,7 +154,7 @@ export async function setSessionCookie(userId: string) {
     httpOnly: true,
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",
-    maxAge: 60 * 60 * 24 * 7, // 7 ngày
+    maxAge: 60 * 60 * 24 * 7,
   });
 }
 
