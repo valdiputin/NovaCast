@@ -68,26 +68,36 @@ export async function loginAction(formData: FormData) {
     });
   }
 
-  // 2. Tìm User trong Database
-  const user = await prisma.user.findFirst({
-    where: {
-      OR: [{ phone: identifier }, { email: identifier }],
-      isActive: true,
-    },
-  });
+  try {
+    // 2. Tìm User trong Database
+    const user = await prisma.user.findFirst({
+      where: {
+        OR: [{ phone: identifier.trim() }, { email: identifier.trim() }],
+        isActive: true,
+      },
+    });
 
-  if (!user) {
-    return { error: "Tài khoản hoặc mật khẩu không chính xác" };
+    if (!user) {
+      return { error: "Tài khoản hoặc mật khẩu không chính xác" };
+    }
+
+    // 3. So khớp mật khẩu với hash bcrypt
+    const isValid = await bcrypt.compare(password, user.passwordHash);
+    if (!isValid) {
+      return { error: "Tài khoản hoặc mật khẩu không chính xác" };
+    }
+
+    // 4. Ký và lưu session an toàn
+    await setSessionCookie(user.id);
+  } catch (e) {
+    // Không để lỗi server làm trắng trang đăng nhập; ghi log để xem trong Vercel → Logs
+    console.error("[loginAction]", e);
+    const msg = e instanceof Error ? e.message : "";
+    if (msg.includes("AUTH_SECRET")) {
+      return { error: "Máy chủ chưa cấu hình AUTH_SECRET (Vercel → Settings → Environment Variables), sau đó Redeploy." };
+    }
+    return { error: "Không kết nối được máy chủ/cơ sở dữ liệu. Vui lòng thử lại sau." };
   }
-
-  // 3. So khớp mật khẩu với hash bcrypt
-  const isValid = await bcrypt.compare(password, user.passwordHash);
-  if (!isValid) {
-    return { error: "Tài khoản hoặc mật khẩu không chính xác" };
-  }
-
-  // 4. Ký và lưu session an toàn
-  await setSessionCookie(user.id);
   redirect("/stores");
 }
 
