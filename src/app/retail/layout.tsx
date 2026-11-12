@@ -1,11 +1,5 @@
-import { Sidebar } from "@/components/layout/Sidebar";
+import { ModuleShell } from "@/components/shell/ModuleShell";
 
 export default function RetailLayout({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="flex min-h-screen bg-[#F5F7FB]">
-      <Sidebar moduleType="retail" />
-      <div className="flex-1 flex flex-col min-w-0">{children}</div>
-    </div>
-  );
+  return <ModuleShell module="retail">{children}</ModuleShell>;
 }
-

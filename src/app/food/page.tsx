@@ -1,129 +1,113 @@
 import { prisma } from "@/lib/prisma";
 import { getCurrentStore } from "@/lib/auth";
 import { Header } from "@/components/layout/Header";
-import { KpiCard } from "@/components/ui/common";
-import { ShoppingBag, DollarSign, Clock, XCircle, Award } from "lucide-react";
+import { Card, CardTitle, KpiPill, PageBody, pctChange, IconTile } from "@/components/ui/kit";
+import { Thumb } from "@/components/ui/Thumb";
+import { FoodRevenueChart } from "@/components/charts/Charts";
+import { RangeSelect } from "@/components/ui/RangeSelect";
+import { dayRange, lastDays, bucketByDay } from "@/lib/stats";
 import { formatCurrency } from "@/lib/format";
+import { ShoppingCart, CircleDollarSign, Hourglass, CalendarDays, BarChart3, Trophy, PieChart, Users } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
-export default async function FoodOverviewPage() {
+export default async function FoodDashboard({ searchParams }: { searchParams: Promise<{ days?: string }> }) {
   const store = await getCurrentStore("FOOD");
+  const sp = await searchParams;
+  const nDays = sp.days === "30" ? 30 : 7;
+  const days = lastDays(nDays);
 
-  // Query DB thật theo storeId
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  const [today, yesterday, chartOrders, top] = await Promise.all([
+    prisma.order.findMany({ where: { storeId: store.id, createdAt: dayRange(0) }, select: { status: true, totalAmount: true } }),
+    prisma.order.findMany({ where: { storeId: store.id, createdAt: dayRange(1) }, select: { status: true, totalAmount: true } }),
+    prisma.order.findMany({
+      where: { storeId: store.id, createdAt: { gte: days[0].start }, status: { not: "CANCELLED" } },
+      select: { createdAt: true, totalAmount: true },
+    }),
+    prisma.product.findMany({ where: { storeId: store.id, deletedAt: null }, orderBy: { soldCount: "desc" }, take: 5 }),
+  ]);
 
-  const [ordersToday, completedOrders, pendingOrders, cancelledOrders, topProducts] =
-    await Promise.all([
-      prisma.order.count({
-        where: { storeId: store.id, createdAt: { gte: today } },
-      }),
-      prisma.order.findMany({
-        where: { storeId: store.id, status: "COMPLETED", createdAt: { gte: today } },
-        select: { totalAmount: true },
-      }),
-      prisma.order.count({
-        where: { storeId: store.id, status: "PENDING" },
-      }),
-      prisma.order.count({
-        where: { storeId: store.id, status: "CANCELLED", createdAt: { gte: today } },
-      }),
-      prisma.product.findMany({
-        where: { storeId: store.id, deletedAt: null },
-        take: 5,
-        orderBy: { basePrice: "desc" },
-      }),
-    ]);
+  const sum = (rows: { status: string; totalAmount: bigint }[]) =>
+    rows.filter((o) => o.status !== "CANCELLED").reduce((s, o) => s + Number(o.totalAmount), 0);
+  const k = {
+    orders: today.length,
+    ordersY: yesterday.length,
+    revenue: sum(today),
+    revenueY: sum(yesterday),
+    pending: today.filter((o) => o.status === "PENDING").length,
+    pendingY: yesterday.filter((o) => o.status === "PENDING").length,
+    cancelled: today.filter((o) => o.status === "CANCELLED"),
+    cancelledY: yesterday.filter((o) => o.status === "CANCELLED").length,
+  };
+  const cancelledSum = k.cancelled.reduce((s, o) => s + Number(o.totalAmount), 0);
+  const revenue = bucketByDay(days, chartOrders, (o) => o.createdAt, (o) => Number(o.totalAmount));
+  const counts = bucketByDay(days, chartOrders, (o) => o.createdAt, () => 1);
+  const chart = days.map((d, i) => ({ label: d.label, revenue: revenue[i], orders: counts[i] }));
 
-  const revenueToday = completedOrders.reduce((sum, o) => sum + Number(o.totalAmount), 0);
+  const stats = [
+    { icon: <ShoppingCart className="w-8 h-8" fill="currentColor" />, tile: "bg-blue-50 text-[#1565F5]", value: String(k.orders), label: "Đơn hàng hôm nay", change: pctChange(k.orders, k.ordersY) ?? 0 },
+    { icon: <CircleDollarSign className="w-8 h-8" />, tile: "bg-emerald-50 text-emerald-600", value: formatCurrency(k.revenue), label: "Doanh thu hôm nay", change: pctChange(k.revenue, k.revenueY) ?? 0 },
+    { icon: <Hourglass className="w-8 h-8" />, tile: "bg-orange-50 text-orange-500", value: String(k.pending), label: "Đơn chờ xử lý", change: pctChange(k.pending, k.pendingY) ?? 0 },
+    { icon: <CalendarDays className="w-8 h-8" />, tile: "bg-blue-50 text-[#1565F5]", value: String(k.cancelled.length), label: `Đơn hủy hôm nay (${formatCurrency(cancelledSum)})`, change: pctChange(k.cancelled.length, k.cancelledY) ?? 0 },
+  ];
 
   return (
     <div className="flex-1 flex flex-col">
-      <Header
-        title={`Tổng Quan — ${store.name}`}
-        subtitle="Thống kê doanh số, đơn hàng và các món bán chạy từ cơ sở dữ liệu thật"
-      />
-
-      <main className="p-8 space-y-6">
-        {/* KPI Cards tính toán từ DB */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
-          <KpiCard
-            title="Đơn hàng hôm nay"
-            value={ordersToday}
-            icon={<ShoppingBag className="w-6 h-6" />}
-            iconBgColor="bg-blue-50 text-blue-600"
-            changePercent={10}
-            changeLabel="so với hôm qua"
-          />
-          <KpiCard
-            title="Doanh thu hôm nay"
-            value={formatCurrency(revenueToday)}
-            icon={<DollarSign className="w-6 h-6" />}
-            iconBgColor="bg-emerald-50 text-emerald-600"
-            changePercent={15}
-            changeLabel="so với hôm qua"
-          />
-          <KpiCard
-            title="Đơn chờ xử lý"
-            value={pendingOrders}
-            icon={<Clock className="w-6 h-6" />}
-            iconBgColor="bg-amber-50 text-amber-600"
-            changePercent={0}
-            changeLabel="cần xử lý ngay"
-          />
-          <KpiCard
-            title="Đơn hủy hôm nay"
-            value={cancelledOrders}
-            icon={<XCircle className="w-6 h-6" />}
-            iconBgColor="bg-rose-50 text-rose-600"
-            changePercent={-20}
-            changeLabel="so với hôm qua"
-          />
+      <Header title="Tổng quan" />
+      <PageBody>
+        <div className="grid grid-cols-2 xl:grid-cols-4 gap-5">
+          {stats.map((s) => (
+            <KpiPill key={s.label} icon={s.icon} tileClass={s.tile} value={s.value} label={s.label} change={s.change} />
+          ))}
         </div>
 
-        {/* Danh sách món trong DB */}
-        <div className="bg-white rounded-2xl p-6 border border-slate-100 shadow-sm">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center space-x-2">
-              <Award className="w-5 h-5 text-amber-500" />
-              <h3 className="font-bold text-slate-800 text-base">Thực Đơn Cửa Hàng Hiện Tại</h3>
-            </div>
-            <span className="text-xs text-slate-400">Dữ liệu từ Neon PostgreSQL</span>
-          </div>
-
-          <div className="space-y-3">
-            {topProducts.map((p, i) => (
-              <div
-                key={p.id}
-                className="flex items-center justify-between pb-3 border-b border-slate-50 last:border-0 last:pb-0"
-              >
-                <div className="flex items-center space-x-3">
-                  <span className="w-6 h-6 rounded-lg bg-slate-100 text-slate-600 font-bold text-xs flex items-center justify-center">
-                    {i + 1}
-                  </span>
-                  <div>
-                    <p className="text-xs font-bold text-slate-800">{p.name}</p>
-                    <p className="text-[10px] text-slate-400">
-                      {p.isCombo ? "Combo Tiết Kiệm" : "Món Lẻ"}
-                    </p>
+        <div className="grid grid-cols-1 xl:grid-cols-[1fr_440px] gap-5">
+          <Card className="p-6">
+            <CardTitle
+              icon={<BarChart3 className="w-7 h-7 text-[#1565F5]" />}
+              right={<RangeSelect param="days" value={String(nDays)} options={[{ value: "7", label: "7 ngày qua" }, { value: "30", label: "30 ngày qua" }]} />}
+            >
+              Doanh thu {nDays} ngày gần nhất
+            </CardTitle>
+            <FoodRevenueChart data={chart} />
+          </Card>
+          <Card className="p-6">
+            <CardTitle icon={<Trophy className="w-7 h-7 text-amber-500" fill="currentColor" />}>Món bán chạy nhất</CardTitle>
+            <ol className="space-y-3.5">
+              {top.map((p, i) => (
+                <li key={p.id} className="flex items-center gap-4">
+                  <span className="w-9 h-9 rounded-full bg-rose-50 text-rose-500 font-bold flex items-center justify-center shrink-0">{i + 1}</span>
+                  <Thumb src={p.imageUrl} alt={p.name} size={52} />
+                  <div className="min-w-0">
+                    <div className="font-medium text-[#1E293B] truncate">{p.name}</div>
+                    <div className="text-sm text-slate-500">{p.soldCount.toLocaleString("vi-VN")} đã bán</div>
                   </div>
-                </div>
-                <div className="text-right">
-                  <p className="text-xs font-bold text-rose-600">
-                    {formatCurrency(p.basePrice)}
-                  </p>
-                  {p.discountPercent > 0 && (
-                    <span className="text-[10px] text-emerald-600 font-semibold">
-                      Giảm {p.discountPercent}%
-                    </span>
-                  )}
+                </li>
+              ))}
+            </ol>
+          </Card>
+        </div>
+
+        <Card className="p-6">
+          <CardTitle icon={<PieChart className="w-7 h-7 text-[#1565F5]" fill="currentColor" />}>Tổng quan</CardTitle>
+          <div className="grid grid-cols-2 xl:grid-cols-4 divide-x divide-slate-200">
+            {[
+              { ...stats[0], icon: <ShoppingCart className="w-7 h-7" fill="currentColor" />, tile: "bg-blue-50 text-[#1565F5]" },
+              { ...stats[1], icon: <CircleDollarSign className="w-7 h-7" />, tile: "bg-emerald-50 text-emerald-600" },
+              { ...stats[2], icon: <Users className="w-7 h-7" fill="currentColor" />, tile: "bg-orange-50 text-orange-500" },
+              { ...stats[3], icon: <CalendarDays className="w-7 h-7" />, tile: "bg-blue-50 text-[#1565F5]" },
+            ].map((s) => (
+              <div key={s.label} className="flex items-center gap-4 px-6 first:pl-2">
+                <IconTile className={s.tile}>{s.icon}</IconTile>
+                <div>
+                  <div className="text-2xl font-bold text-[#1E293B]">{s.value}</div>
+                  <div className="text-sm text-slate-500">{s.label}</div>
                 </div>
               </div>
             ))}
           </div>
-        </div>
-      </main>
+        </Card>
+      </PageBody>
     </div>
   );
 }

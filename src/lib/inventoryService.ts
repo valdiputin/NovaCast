@@ -27,11 +27,12 @@ export class InventoryService {
    */
   static async recordReceipt(
     tx: Prisma.TransactionClient,
-    input: Omit<StockChangeInput, "type">
+    input: Omit<StockChangeInput, "type"> & { movementType?: MovementType }
   ) {
     if (input.quantity <= 0) {
       throw new Error("Số lượng nhập kho phải lớn hơn 0");
     }
+    const movementType = input.movementType ?? MovementType.RECEIPT;
 
     const loc = await tx.stockLocation.findUnique({
       where: { id: input.locationId },
@@ -47,7 +48,7 @@ export class InventoryService {
         materialId: input.materialId,
         toLocationId: input.locationId,
         quantityChange: input.quantity,
-        type: MovementType.RECEIPT,
+        type: movementType,
         refType: input.refType ?? "RECEIPT",
         refId: input.refId,
         unitCost: input.unitCost,
@@ -252,6 +253,7 @@ export class InventoryService {
       ...input,
       locationId: input.targetLocationId,
       refType: "TRANSFER",
+      movementType: MovementType.TRANSFER_IN,
     });
   }
 
@@ -280,6 +282,17 @@ export class InventoryService {
     });
     const kind = loc?.kind ?? LocationKind.WAREHOUSE;
 
+    // Điều chỉnh giảm: không được làm âm tồn tại vị trí
+    if (input.delta < 0) {
+      await this.decrementLevelOrThrow(tx, {
+        storeId: input.storeId,
+        locationId: input.locationId,
+        variantId: input.variantId,
+        materialId: input.materialId,
+        quantity: -input.delta,
+      });
+    }
+
     const movement = await tx.stockMovement.create({
       data: {
         storeId: input.storeId,
@@ -297,13 +310,15 @@ export class InventoryService {
       },
     });
 
-    await this.upsertStockLevel(tx, {
-      storeId: input.storeId,
-      locationId: input.locationId,
-      variantId: input.variantId,
-      materialId: input.materialId,
-      delta: input.delta,
-    });
+    if (input.delta > 0) {
+      await this.upsertStockLevel(tx, {
+        storeId: input.storeId,
+        locationId: input.locationId,
+        variantId: input.variantId,
+        materialId: input.materialId,
+        delta: input.delta,
+      });
+    }
 
     if (input.variantId) {
       await tx.productVariant.update({
@@ -360,14 +375,24 @@ export class InventoryService {
     });
     const kind = loc?.kind ?? LocationKind.WAREHOUSE;
 
-    // Cập nhật stock level vị trí
-    await this.upsertStockLevel(tx, {
-      storeId: original.storeId,
-      locationId: targetLocId,
-      variantId: original.variantId ?? undefined,
-      materialId: original.materialId ?? undefined,
-      delta: reverseChange,
-    });
+    // Cập nhật stock level vị trí — đảo ngược làm giảm tồn thì phải đủ hàng (không để âm tồn)
+    if (reverseChange < 0) {
+      await this.decrementLevelOrThrow(tx, {
+        storeId: original.storeId,
+        locationId: targetLocId,
+        variantId: original.variantId ?? undefined,
+        materialId: original.materialId ?? undefined,
+        quantity: -reverseChange,
+      });
+    } else {
+      await this.upsertStockLevel(tx, {
+        storeId: original.storeId,
+        locationId: targetLocId,
+        variantId: original.variantId ?? undefined,
+        materialId: original.materialId ?? undefined,
+        delta: reverseChange,
+      });
+    }
 
     if (original.variantId) {
       await tx.productVariant.update({
@@ -453,6 +478,36 @@ export class InventoryService {
       cachedTotal: cachedTotal,
       isBalanced: moveSum === levelSum && levelSum === cachedTotal,
     };
+  }
+
+  /**
+   * Trừ nguyên tử tại một vị trí; ném lỗi nếu không đủ hàng (chống âm tồn kể cả khi chạy đồng thời)
+   */
+  private static async decrementLevelOrThrow(
+    tx: Prisma.TransactionClient,
+    params: {
+      storeId: string;
+      locationId: string;
+      variantId?: string;
+      materialId?: string;
+      quantity: number;
+    }
+  ) {
+    const res = await tx.stockLevel.updateMany({
+      where: {
+        storeId: params.storeId,
+        locationId: params.locationId,
+        variantId: params.variantId ?? null,
+        materialId: params.materialId ?? null,
+        quantity: { gte: params.quantity },
+      },
+      data: { quantity: { decrement: params.quantity } },
+    });
+    if (res.count === 0) {
+      throw new Error(
+        `Không đủ tồn tại vị trí để thực hiện (cần trừ ${params.quantity}) — thao tác sẽ làm âm tồn kho`
+      );
+    }
   }
 
   private static async upsertStockLevel(

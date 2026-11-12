@@ -69,6 +69,7 @@ model Store {
   audits      StockAudit[]
   receipts    StockReceipt[]
   issues      StockIssue[]
+  returnSlips ReturnSlip[]
   notifications Notification[]
   logs        ActivityLog[]
 
@@ -216,6 +217,8 @@ model Category {
   name      String
   order     Int       @default(0)
   isVisible Boolean   @default(true)
+  stockQty  Int       @default(0)  // Số lượng tồn của danh mục (màn Danh mục đồ ăn)
+  minStock  Int       @default(20) // Định mức: ≤ định mức → Sắp hết hàng
   deletedAt DateTime?
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
@@ -231,6 +234,7 @@ model Product {
   id             String         @id @default(cuid())
   storeId        String
   categoryId     String?
+  code           String?        // Mã sản phẩm hiển thị (VD: SP-AT01)
   name           String
   description    String?
   imageUrl       String?
@@ -240,6 +244,7 @@ model Product {
   status         ProductStatus  @default(ACTIVE)
   isCombo        Boolean        @default(false)
   isFeatured     Boolean        @default(false)
+  soldCount      Int            @default(0) // Số đã bán (cộng dồn khi đơn hoàn thành)
   deletedAt      DateTime?
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @updatedAt
@@ -283,6 +288,7 @@ model ProductVariant {
   receiptItems   StockReceiptItem[]
   issueItems     StockIssueItem[]
   auditItems     StockAuditItem[]
+  slipItems      ReturnSlipItem[]
 
   @@unique([productId, sku])
   @@index([barcode])
@@ -312,6 +318,7 @@ model Material {
   sku            String
   barcode        String?
   name           String
+  imageUrl       String?
   type           MaterialType   @default(RAW_MATERIAL)
   unit           String         // Cuộn, Kg, Cái, Thùng, Bao, Cây...
   costPrice      BigInt         @default(0)
@@ -505,11 +512,13 @@ model StockReceipt {
   code        String             // PNH-YYYYMMDD-NN hoặc PNK-YYYYMMDD-NN
   storeId     String
   supplierId  String?
+  receiptType String             @default("SUPPLIER") // PURCHASE: Nhập mua hàng · SUPPLIER: Nhập từ NCC · PRODUCTION: Nhập thành phẩm · RETURN: Nhập trả lại
   receiptDate DateTime           @default(now())
   note        String?
   status      DocumentStatus     @default(DRAFT)
   totalAmount BigInt             @default(0)
   createdBy   String?
+  createdByName String?
   createdAt   DateTime           @default(now())
   updatedAt   DateTime           @updatedAt
 
@@ -560,6 +569,7 @@ model StockIssue {
   status      DocumentStatus   @default(DRAFT)
   totalAmount BigInt           @default(0)
   createdBy   String?
+  createdByName String?
   createdAt   DateTime         @default(now())
   updatedAt   DateTime         @updatedAt
 
@@ -596,6 +606,7 @@ model StockAudit {
   status      DocumentStatus   @default(DRAFT)
   totalVarianceValue BigInt    @default(0)
   createdBy   String?
+  createdByName String?
   createdAt   DateTime         @default(now())
   updatedAt   DateTime         @updatedAt
 
@@ -611,6 +622,7 @@ model StockAuditItem {
   auditId     String
   variantId   String?
   materialId  String?
+  locationId  String?         // Vị trí kiểm đếm (Kệ / Kho / Bin)
   systemQty   Int             // Tồn hệ thống lúc chốt phiếu
   actualQty   Int             // Tồn thực tế kiểm đếm
   variance    Int             // actual - system
@@ -622,6 +634,58 @@ model StockAuditItem {
   material    Material?       @relation(fields: [materialId], references: [id], onDelete: SetNull)
 
   @@map("stock_audit_items")
+}
+
+// Phiếu bán lẻ: Khách trả hàng (PRH) · Xuất hủy (PXH) · Chuyển kho (PCK)
+enum SlipKind {
+  CUSTOMER_RETURN
+  DISPOSE
+  TRANSFER
+}
+
+enum ReturnCondition {
+  GOOD      // Hàng nguyên vẹn
+  DAMAGED   // Hàng lỗi
+}
+
+model ReturnSlip {
+  id             String           @id @default(cuid())
+  code           String
+  storeId        String
+  kind           SlipKind
+  customerName   String?
+  partnerId      String?
+  condition      ReturnCondition?
+  fromLocationId String?          // Xuất hủy / chuyển kho: vị trí nguồn
+  toLocationId   String?          // Chuyển kho: vị trí đích
+  slipDate       DateTime         @default(now())
+  note           String?
+  status         DocumentStatus   @default(DRAFT) // DRAFT = Chờ duyệt, APPROVED = Hoàn thành
+  totalAmount    BigInt           @default(0)
+  createdByName  String?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  store          Store            @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  items          ReturnSlipItem[]
+
+  @@unique([storeId, code])
+  @@index([storeId, kind, slipDate])
+  @@map("return_slips")
+}
+
+model ReturnSlipItem {
+  id          String         @id @default(cuid())
+  slipId      String
+  variantId   String
+  quantity    Int
+  unitPrice   BigInt         @default(0)
+  totalAmount BigInt         @default(0)
+
+  slip        ReturnSlip     @relation(fields: [slipId], references: [id], onDelete: Cascade)
+  variant     ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  @@map("return_slip_items")
 }
 
 // ----------------------------------------------------

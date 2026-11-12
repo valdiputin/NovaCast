@@ -2,158 +2,139 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
 import {
-  LayoutDashboard,
-  UtensilsCrossed,
-  Layers,
-  ShoppingBag,
-  Ticket,
-  Star,
-  Users,
-  Store as StoreIcon,
-  Shirt,
-  ScanBarcode,
-  Truck,
-  RotateCcw,
-  ClipboardCheck,
-  Boxes,
-  ArrowDownToLine,
-  ArrowUpFromLine,
-  LogOut,
-  Home,
+  Box, ConciergeBell, ShoppingCart, Star, PieChart, User, Home, Boxes, Ticket, Undo2, ClipboardCheck,
+  Download, Upload, ChevronDown, LogOut, ArrowLeftRight, UserCircle2,
 } from "lucide-react";
 import { cn } from "../ui/common";
+import { LogoMark, LogoText } from "../shell/Logo";
+import { useShell } from "../shell/ShellContext";
+import { logoutAction } from "@/app/actions/auth";
 
 export type ModuleType = "food" | "retail" | "warehouse";
 
 interface NavItem {
-  label: string;
+  label: React.ReactNode;
   href: string;
   icon: React.ReactNode;
+  exact?: boolean;
 }
+
+const ic = "w-6 h-6";
+const NAV: Record<ModuleType, NavItem[]> = {
+  // Thứ tự theo ảnh "NovaCast Vietnamese Dashboard Overview"
+  food: [
+    { label: "Nguyên liệu", href: "/food/categories", icon: <Box className={ic} /> },
+    { label: "Sản phẩm", href: "/food/products", icon: <ConciergeBell className={ic} /> },
+    { label: "Đơn hàng", href: "/food/orders", icon: <ShoppingCart className={ic} /> },
+    { label: "Đánh giá", href: "/food/reviews", icon: <Star className={ic} fill="currentColor" /> },
+    { label: "Tổng quan", href: "/food", icon: <PieChart className={ic} />, exact: true },
+    { label: "Tài khoản", href: "/food/account", icon: <User className={ic} fill="currentColor" /> },
+  ],
+  retail: [
+    { label: "Tổng quan", href: "/retail", icon: <Home className={ic} fill="currentColor" />, exact: true },
+    { label: <>Sản phẩm &amp;<br />Biến thể</>, href: "/retail/products", icon: <Boxes className={ic} /> },
+    { label: "Voucher", href: "/retail/vouchers", icon: <Ticket className={ic} /> },
+    { label: <>Nhập hàng<br />(Từ NCC)</>, href: "/retail/receiving", icon: <ShoppingCart className={ic} /> },
+    { label: <>Xuất &amp; Trả hàng /<br />Chuyển kho</>, href: "/retail/returns", icon: <Undo2 className={ic} /> },
+    { label: "Kiểm kê tồn kho", href: "/retail/audit", icon: <ClipboardCheck className={ic} /> },
+    { label: <>Bán hàng<br />tại quầy</>, href: "/retail/pos", icon: <ShoppingCart className={ic} /> },
+  ],
+  warehouse: [
+    { label: "Tổng quan", href: "/warehouse", icon: <Home className={ic} fill="currentColor" />, exact: true },
+    { label: <>Danh mục Vật tư &amp;<br />Thành phẩm</>, href: "/warehouse/items", icon: <Boxes className={ic} /> },
+    { label: "Nhập kho", href: "/warehouse/receipts", icon: <Download className={ic} /> },
+    { label: "Xuất kho", href: "/warehouse/issues", icon: <Upload className={ic} /> },
+    { label: "Kiểm kê & Tồn kho", href: "/warehouse/audit", icon: <ClipboardCheck className={ic} /> },
+    { label: "Tài khoản", href: "/warehouse/account", icon: <User className={ic} fill="currentColor" /> },
+  ],
+};
 
 export function Sidebar({ moduleType }: { moduleType: ModuleType }) {
   const pathname = usePathname();
+  const shell = useShell();
+  const [open, setOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
 
-  const foodNav: NavItem[] = [
-    { label: "Tổng quan", href: "/food", icon: <LayoutDashboard className="w-5 h-5" /> },
-    { label: "Danh mục", href: "/food/categories", icon: <Layers className="w-5 h-5" /> },
-    { label: "Sản phẩm", href: "/food/products", icon: <UtensilsCrossed className="w-5 h-5" /> },
-    { label: "Nguyên liệu", href: "/food/materials", icon: <Boxes className="w-5 h-5" /> },
-    { label: "Đơn hàng", href: "/food/orders", icon: <ShoppingBag className="w-5 h-5" /> },
-    { label: "Voucher", href: "/food/vouchers", icon: <Ticket className="w-5 h-5" /> },
-    { label: "Đánh giá", href: "/food/reviews", icon: <Star className="w-5 h-5" /> },
-    { label: "Tài khoản", href: "/account", icon: <Users className="w-5 h-5" /> },
-  ];
-
-  const retailNav: NavItem[] = [
-    { label: "Tổng quan", href: "/retail", icon: <LayoutDashboard className="w-5 h-5" /> },
-    { label: "Sản phẩm & Biến thể", href: "/retail/products", icon: <Shirt className="w-5 h-5" /> },
-    { label: "Voucher", href: "/retail/vouchers", icon: <Ticket className="w-5 h-5" /> },
-    { label: "Bán hàng tại quầy", href: "/retail/pos", icon: <ScanBarcode className="w-5 h-5" /> },
-    { label: "Đơn hàng", href: "/retail/orders", icon: <ShoppingBag className="w-5 h-5" /> },
-    { label: "Nhập hàng (Từ NCC)", href: "/retail/receiving", icon: <Truck className="w-5 h-5" /> },
-    { label: "Xuất & Trả hàng", href: "/retail/returns", icon: <RotateCcw className="w-5 h-5" /> },
-    { label: "Kiểm kê tồn kho", href: "/retail/audit", icon: <ClipboardCheck className="w-5 h-5" /> },
-    { label: "Đối tác", href: "/retail/partners", icon: <Users className="w-5 h-5" /> },
-    { label: "Tài khoản", href: "/account", icon: <Users className="w-5 h-5" /> },
-  ];
-
-  const warehouseNav: NavItem[] = [
-    { label: "Tổng quan", href: "/warehouse", icon: <LayoutDashboard className="w-5 h-5" /> },
-    { label: "Vật tư & Thành phẩm", href: "/warehouse/items", icon: <Boxes className="w-5 h-5" /> },
-    { label: "Nhập kho", href: "/warehouse/receipts", icon: <ArrowDownToLine className="w-5 h-5" /> },
-    { label: "Xuất kho", href: "/warehouse/issues", icon: <ArrowUpFromLine className="w-5 h-5" /> },
-    { label: "Kiểm kê & Tồn kho", href: "/warehouse/audit", icon: <ClipboardCheck className="w-5 h-5" /> },
-    { label: "Đối tác", href: "/warehouse/partners", icon: <Users className="w-5 h-5" /> },
-    { label: "Tài khoản", href: "/account", icon: <Users className="w-5 h-5" /> },
-  ];
-
-  const navItems =
-    moduleType === "food"
-      ? foodNav
-      : moduleType === "retail"
-      ? retailNav
-      : warehouseNav;
+  useEffect(() => {
+    const close = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, []);
 
   return (
-    <aside className="w-[270px] bg-[#16213E] text-white flex flex-col justify-between shrink-0 h-screen sticky top-0 select-none shadow-xl">
-      {/* Top Header / Logo */}
-      <div>
-        <div className="h-20 flex items-center px-6 border-b border-slate-700/50">
-          <Link href="/stores" className="flex items-center space-x-2.5">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center text-white shadow-md shadow-blue-500/20">
-              <StoreIcon className="w-5 h-5" />
-            </div>
-            <div className="flex flex-col">
-              <span className="font-extrabold text-xl tracking-tight leading-none text-white">
-                Nova<span className="text-[#F59E0B]">Cast</span>
-              </span>
-              <span className="text-[10px] text-slate-400 mt-1 uppercase tracking-wider font-semibold">
-                {moduleType === "food"
-                  ? "Cửa hàng đồ ăn"
-                  : moduleType === "retail"
-                  ? "Cửa hàng bán lẻ"
-                  : "Kho doanh nghiệp"}
-              </span>
-            </div>
-          </Link>
-        </div>
+    <aside className="w-[260px] bg-[#16213E] text-white flex flex-col shrink-0 h-screen sticky top-0 select-none">
+      <Link href={`/${moduleType}`} className="h-[88px] flex items-center gap-3 px-6 border-b border-white/10">
+        <LogoMark className="w-12 h-10" cart={false} />
+        <LogoText className="text-[26px]" />
+      </Link>
 
-        {/* Navigation Links */}
-        <nav className="p-4 space-y-1 overflow-y-auto max-h-[calc(100vh-210px)] scrollbar-none">
-          {navItems.map((item) => {
-            const isActive =
-              item.href === `/${moduleType}`
-                ? pathname === item.href
-                : pathname.startsWith(item.href);
+      <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-1.5">
+        {NAV[moduleType].map((item) => {
+          const active = item.exact ? pathname === item.href : pathname === item.href || pathname.startsWith(item.href + "/");
+          return (
+            <Link
+              key={item.href}
+              href={item.href}
+              className={cn(
+                "flex items-center gap-4 px-4 py-3 rounded-xl text-[17px] leading-snug transition-colors",
+                active ? "bg-[#1565F5] text-white font-semibold shadow-lg shadow-blue-900/30" : "text-slate-100 hover:bg-white/10"
+              )}
+            >
+              <span className="shrink-0">{item.icon}</span>
+              <span>{item.label}</span>
+            </Link>
+          );
+        })}
+      </nav>
 
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={cn(
-                  "flex items-center space-x-3.5 px-4 py-3 rounded-xl text-sm font-medium transition-all duration-150",
-                  isActive
-                    ? "bg-[#1565F5] text-white shadow-lg shadow-blue-600/30 font-semibold"
-                    : "text-slate-300 hover:bg-slate-800/60 hover:text-white"
-                )}
-              >
-                <span className={cn(isActive ? "text-white" : "text-slate-400")}>
-                  {item.icon}
-                </span>
-                <span>{item.label}</span>
+      <div className="relative border-t border-white/10 p-4" ref={menuRef}>
+        {open && (
+          <div className="absolute bottom-[76px] left-4 right-4 bg-white text-slate-700 rounded-xl shadow-xl overflow-hidden text-sm z-50">
+            <div className="px-4 py-3 border-b border-slate-100">
+              <div className="font-semibold text-slate-800">{shell?.userName ?? "admin"}</div>
+              <div className="text-xs text-slate-400">{shell?.roleLabel} · {shell?.storeName}</div>
+            </div>
+            <Link href={`/${moduleType}/account`} className="flex items-center gap-2.5 px-4 py-2.5 hover:bg-slate-50">
+              <UserCircle2 className="w-4 h-4" /> Tài khoản
+            </Link>
+            {moduleType === "retail" && (
+              <>
+                <Link href="/retail/orders" className="flex items-center gap-2.5 px-4 py-2.5 hover:bg-slate-50">
+                  <ShoppingCart className="w-4 h-4" /> Đơn hàng
+                </Link>
+                <Link href="/retail/partners" className="flex items-center gap-2.5 px-4 py-2.5 hover:bg-slate-50">
+                  <User className="w-4 h-4" /> Nhà cung cấp & Khách hàng
+                </Link>
+              </>
+            )}
+            {moduleType === "warehouse" && (
+              <Link href="/warehouse/partners" className="flex items-center gap-2.5 px-4 py-2.5 hover:bg-slate-50">
+                <User className="w-4 h-4" /> Nhà cung cấp
               </Link>
-            );
-          })}
-        </nav>
-      </div>
-
-      {/* Bottom Footer Actions */}
-      <div className="p-4 border-t border-slate-700/50 bg-[#121b33]">
-        <Link
-          href="/stores"
-          className="flex items-center space-x-3 px-4 py-2.5 text-xs font-medium text-slate-300 hover:text-white hover:bg-slate-800/80 rounded-lg transition-colors mb-2"
-        >
-          <Home className="w-4 h-4 text-slate-400" />
-          <span>Về trang chủ (Đổi loại hình)</span>
-        </Link>
-
-        {/* User bar */}
-        <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-slate-800/60 border border-slate-700/40">
-          <div className="flex items-center space-x-3">
-            <div className="w-8 h-8 rounded-full bg-blue-500/20 text-blue-400 font-bold flex items-center justify-center text-xs border border-blue-500/30">
-              AD
-            </div>
-            <div className="flex flex-col text-left">
-              <span className="text-xs font-semibold text-slate-100 leading-tight">Admin</span>
-              <span className="text-[10px] text-slate-400">admin@novacast.local</span>
-            </div>
+            )}
+            <Link href="/stores" className="flex items-center gap-2.5 px-4 py-2.5 hover:bg-slate-50">
+              <ArrowLeftRight className="w-4 h-4" /> Về trang chủ (đổi loại hình)
+            </Link>
+            <form action={logoutAction}>
+              <button className="w-full flex items-center gap-2.5 px-4 py-2.5 text-rose-600 hover:bg-rose-50">
+                <LogOut className="w-4 h-4" /> Đăng xuất
+              </button>
+            </form>
           </div>
-          <Link href="/login" title="Đăng xuất" className="text-slate-400 hover:text-rose-400 transition-colors p-1">
-            <LogOut className="w-4 h-4" />
-          </Link>
-        </div>
+        )}
+        <button onClick={() => setOpen((o) => !o)} className="w-full flex items-center justify-between px-2 py-1.5 rounded-xl hover:bg-white/5">
+          <span className="flex items-center gap-3">
+            <span className="w-11 h-11 rounded-full bg-[#2B6BE6] flex items-center justify-center overflow-hidden">
+              <User className="w-7 h-7 text-white translate-y-1" fill="currentColor" />
+            </span>
+            <span className="text-[17px]">{shell?.userName ?? "admin"}</span>
+          </span>
+          <ChevronDown className={cn("w-5 h-5 transition-transform", open && "rotate-180")} />
+        </button>
       </div>
     </aside>
   );

@@ -1,82 +1,121 @@
 import { prisma } from "@/lib/prisma";
 import { getCurrentStore } from "@/lib/auth";
 import { Header } from "@/components/layout/Header";
-import { StatusPill } from "@/components/ui/common";
-import { formatCurrency } from "@/lib/format";
+import { Card, PageBody, Pill, TH, TD, Pagination, withParams } from "@/components/ui/kit";
+import { SearchBox, RangeSelect } from "@/components/ui/RangeSelect";
+import { Thumb } from "@/components/ui/Thumb";
+import { HistoryButton } from "@/components/inventory/HistoryButton";
+import { MaterialEditor } from "./MaterialEditor";
+import { MATERIAL_TYPE, stockState } from "@/lib/labels";
+import type { MaterialType, Prisma } from "@prisma/client";
 
 export const dynamic = "force-dynamic";
 
-export default async function WarehouseItemsPage() {
-  const store = await getCurrentStore("WAREHOUSE");
+type SP = { q?: string; type?: string; status?: string; page?: string; size?: string };
 
-  const items = await prisma.material.findMany({
-    where: { storeId: store.id, deletedAt: null },
-    orderBy: { createdAt: "desc" },
+export default async function WarehouseItemsPage({ searchParams }: { searchParams: Promise<SP> }) {
+  const store = await getCurrentStore("WAREHOUSE");
+  const sp = await searchParams;
+  const size = [5, 10, 20, 50].includes(Number(sp.size)) ? Number(sp.size) : 5;
+  const page = Math.max(1, Number(sp.page) || 1);
+  const where: Prisma.MaterialWhereInput = {
+    storeId: store.id,
+    deletedAt: null,
+    ...(sp.type && sp.type in MATERIAL_TYPE ? { type: sp.type as MaterialType } : {}),
+    ...(sp.q ? { OR: [{ sku: { contains: sp.q, mode: "insensitive" } }, { name: { contains: sp.q, mode: "insensitive" } }] } : {}),
+  };
+  const [allMatching, bins] = await Promise.all([
+    prisma.material.findMany({ where, orderBy: { createdAt: "asc" } }),
+    prisma.stockLocation.findMany({ where: { storeId: store.id }, orderBy: { name: "asc" }, select: { name: true } }),
+  ]);
+  // Lọc trạng thái tồn (tính theo tồn & định mức)
+  const filtered = allMatching.filter((m) => {
+    const s = stockState(m.totalQty, m.minStock).tone;
+    if (sp.status === "ok") return s === "green";
+    if (sp.status === "low") return s === "amber" || m.totalQty < m.minStock;
+    if (sp.status === "out") return s === "red";
+    return true;
   });
+  const total = filtered.length;
+  const materials = filtered.slice((page - 1) * size, page * size);
+  const params = { q: sp.q, type: sp.type, status: sp.status, size: sp.size };
+  const binNames = bins.map((b) => b.name);
 
   return (
     <div className="flex-1 flex flex-col">
-      <Header
-        title="Danh Mục Vật Tư & Thành Phẩm"
-        subtitle={`Quản lý nguyên vật liệu, bán thành phẩm và thành phẩm tại ${store.name}`}
-      />
-
-      <main className="p-8 space-y-6">
-        <div className="bg-white rounded-2xl p-6 border border-slate-100 shadow-sm">
-          <div className="overflow-x-auto rounded-xl border border-slate-100">
-            <table className="w-full text-left text-xs text-slate-600">
-              <thead className="bg-blue-50/50 text-slate-700 font-bold uppercase text-[10px] tracking-wider border-b border-slate-100">
+      <Header title="Danh mục Vật tư & Thành phẩm" />
+      <PageBody>
+        <Card className="p-4 flex flex-wrap items-center gap-4">
+          <SearchBox placeholder="Tìm kiếm theo mã SKU, tên vật tư..." value={sp.q} className="flex-1 min-w-[320px] [&_input]:h-[60px] [&_input]:text-[18px]" />
+          <RangeSelect param="type" value={sp.type} placeholder="Tất cả loại" className="h-[60px] min-w-[200px] text-[18px]" options={Object.entries(MATERIAL_TYPE).map(([v, t]) => ({ value: v, label: t.label }))} />
+          <RangeSelect param="status" value={sp.status} placeholder="Tất cả trạng thái" className="h-[60px] min-w-[260px] text-[18px]" options={[{ value: "ok", label: "Đủ hàng" }, { value: "low", label: "Sắp hết / dưới định mức" }, { value: "out", label: "Hết hàng" }]} />
+          <MaterialEditor bins={binNames} />
+        </Card>
+        <Card className="overflow-hidden">
+          <table className="w-full">
+            <thead className="bg-[#F1F5FD]">
+              <tr className="[&>th]:text-[17px]">
+                <th className={TH + " w-16 text-center"}><input type="checkbox" className="w-5 h-5" aria-label="Chọn tất cả" /></th>
+                <th className={TH}>Mã SKU / Ảnh</th>
+                <th className={TH}>Tên vật tư / SP</th>
+                <th className={TH + " text-center"}>Loại hàng</th>
+                <th className={TH + " text-center leading-tight"}>Đơn vị tính<br />(ĐVT)</th>
+                <th className={TH + " text-center"}>Vị trí kệ (Bin)</th>
+                <th className={TH + " text-center leading-tight"}>Tồn kho thực tế<br />(Định mức tối thiểu)</th>
+                <th className={TH + " text-center"}>Trạng thái</th>
+                <th className={TH + " text-center"}>Thao tác</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 text-[18px] text-[#1E293B]">
+              {materials.map((m) => {
+                const st = stockState(m.totalQty, m.minStock);
+                const t = MATERIAL_TYPE[m.type];
+                const value = { id: m.id, sku: m.sku, name: m.name, type: m.type, unit: m.unit, locationBin: m.locationBin ?? "", minStock: m.minStock, costPrice: Number(m.costPrice), imageUrl: m.imageUrl ?? "" };
+                return (
+                  <tr key={m.id}>
+                    <td className={TD + " text-center"}><input type="checkbox" className="w-5 h-5" aria-label={`Chọn ${m.sku}`} /></td>
+                    <td className={TD} colSpan={2}>
+                      <span className="flex items-center gap-4">
+                        <Thumb src={m.imageUrl} alt={m.name} size={64} />
+                        <span>
+                          <span className="block font-bold">{m.sku}</span>
+                          <span className="block">{m.name}</span>
+                        </span>
+                      </span>
+                    </td>
+                    <td className={TD + " text-center"}><span className={`px-4 py-1.5 rounded-xl text-[16px] font-medium ${t.cls}`}>{t.label}</span></td>
+                    <td className={TD + " text-center"}>{m.unit}</td>
+                    <td className={TD + " text-center"}>{m.locationBin}</td>
+                    <td className={TD + " text-center"}>
+                      <div className="font-bold">{m.totalQty.toLocaleString("vi-VN")}</div>
+                      <div className="text-[16px] text-slate-500">(Tối thiểu: {m.minStock})</div>
+                    </td>
+                    <td className={TD + " text-center"}><Pill label={st.label} tone={st.tone} className="text-[16px] px-4 py-1.5" /></td>
+                    <td className={TD}>
+                      <div className="flex items-center justify-center gap-2.5">
+                        <MaterialEditor bins={binNames} material={{ ...value, totalQty: m.totalQty, barcode: m.barcode }} mode="view" />
+                        <MaterialEditor bins={binNames} material={value} />
+                        <HistoryButton item={{ materialId: m.id }} name={m.name} />
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+              {materials.length === 0 && (
                 <tr>
-                  <th className="py-3 px-4">Mã SKU</th>
-                  <th className="py-3 px-4">Tên Vật Tư / Thành Phẩm</th>
-                  <th className="py-3 px-4">Phân Loại</th>
-                  <th className="py-3 px-4">Đơn Vị</th>
-                  <th className="py-3 px-4">Vị Trí Kệ (Bin)</th>
-                  <th className="py-3 px-4 text-center">Tồn Kho (Tối thiểu)</th>
-                  <th className="py-3 px-4">Giá Vốn</th>
-                  <th className="py-3 px-4">Trạng Thái</th>
+                  <td colSpan={9} className="py-10 text-center text-slate-400">Không có vật tư phù hợp</td>
                 </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {items.map((mat) => {
-                  const isLow = mat.totalQty <= mat.minStock;
-                  return (
-                    <tr key={mat.id} className="hover:bg-slate-50/60 transition-colors">
-                      <td className="py-3.5 px-4 font-mono font-bold text-slate-900">{mat.sku}</td>
-                      <td className="py-3.5 px-4 font-bold text-slate-800">{mat.name}</td>
-                      <td className="py-3.5 px-4">
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold border bg-purple-50 text-purple-700 border-purple-200">
-                          {mat.type}
-                        </span>
-                      </td>
-                      <td className="py-3.5 px-4 font-medium text-slate-700">{mat.unit}</td>
-                      <td className="py-3.5 px-4">
-                        <span className="font-semibold text-slate-800 bg-slate-100 px-2 py-1 rounded-md">
-                          {mat.locationBin ?? "Chưa xếp kệ"}
-                        </span>
-                      </td>
-                      <td className="py-3.5 px-4 text-center">
-                        <span className="font-bold text-slate-900">{mat.totalQty}</span>
-                        <span className="text-slate-400 mx-1">/</span>
-                        <span className="text-slate-500">{mat.minStock}</span>
-                      </td>
-                      <td className="py-3.5 px-4 font-semibold text-slate-700">
-                        {formatCurrency(mat.costPrice)}
-                      </td>
-                      <td className="py-3.5 px-4">
-                        <StatusPill
-                          label={isLow ? "Sắp hết" : "Đủ hàng"}
-                          variant={isLow ? "amber" : "green"}
-                        />
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+              )}
+            </tbody>
+          </table>
+          <div className="flex items-center justify-between px-6 py-4 border-t border-slate-100">
+            <span className="text-[18px] text-[#1E293B]">
+              Hiển thị {total ? (page - 1) * size + 1 : 0} - {Math.min(page * size, total)} trong {total} mục
+            </span>
+            <Pagination page={page} totalPages={Math.max(1, Math.ceil(total / size))} hrefFor={(p) => withParams("/warehouse/items", params, { page: p })} />
           </div>
-        </div>
-      </main>
+        </Card>
+      </PageBody>
     </div>
   );
 }

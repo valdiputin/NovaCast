@@ -33,5 +33,7 @@ export const config = {
     "/retail/:path*",
     "/warehouse/:path*",
     "/account/:path*",
+    "/m/:path*",
+    "/print/:path*",
   ],
 };

@@ -36,9 +36,10 @@ TZ="Asia/Ho_Chi_Minh"
 
 ### Bước 3: Chạy migration & seed dữ liệu
 ```bash
-npx prisma migrate dev --name init
-npx prisma db seed
+npx prisma migrate deploy   # áp các migration có sẵn trong prisma/migrations
+npx prisma db seed          # chạy prisma/seed.ts qua tsx (cấu hình trong prisma.config.ts)
 ```
+Database phải dùng bảng mã **UTF-8** (Neon mặc định là UTF-8; nếu tự cài Postgres trên Windows hãy tạo DB với `ENCODING 'UTF8' TEMPLATE template0`).
 *Tài khoản quản trị demo sau khi seed:*
 - **SĐT / Email**: `0900000000` / `admin@novacast.local`
 - **Mật khẩu**: `admin123`
@@ -53,6 +54,16 @@ Truy cập `http://localhost:3000`.
 ```bash
 npm run test
 ```
+Không có `TEST_DATABASE_URL` thì chỉ chạy unit test; test tích hợp (`src/lib/inventory.integration.test.ts`) được bỏ qua.
+Để chạy test tích hợp trên PostgreSQL thật (nên dùng **database riêng**, ví dụ một Neon branch), PowerShell:
+```powershell
+$env:DATABASE_URL="postgresql://.../novacast_test"; $env:DIRECT_URL=$env:DATABASE_URL
+npx prisma migrate deploy
+$env:TEST_DATABASE_URL=$env:DATABASE_URL; npm run test
+```
+Test tích hợp gọi trực tiếp các Server Action và kiểm tra: nhập → chuyển kệ → bán POS → trả hàng → kiểm kê/cân bằng,
+chặn hủy phiếu gây âm tồn, 2 đơn POS đồng thời, giá POS lấy từ DB, hàng lỗi không bán được, phân quyền và cách ly cửa hàng.
+Sau mỗi bước sổ cái `stock_movements` = tổng `stock_levels` = cache tồn.
 
 ---
 
@@ -68,12 +79,13 @@ npm run test
    - `AUTH_SECRET`: Khóa bí mật JWT tối thiểu 32 ký tự.
    - `RESEND_API_KEY`: API key gửi OTP từ Resend (tùy chọn).
    - `OTP_REQUIRED`: `true` (nếu muốn bắt buộc OTP khi đăng nhập) hoặc `false`.
-   - `TZ`: `Asia/Ho_Chi_Minh`.
+   - Không cần đặt `TZ`: ngày giờ hiển thị và mã phiếu luôn tính theo giờ Việt Nam trong code (`src/lib/date.ts`).
 4. **Cấu hình Build & Output Settings**:
    - Build Command: `npx prisma migrate deploy && next build`
    - Install Command: `npm install`
 5. **Deploy**:
    - Nhấn **Deploy**. Sau khi deploy thành công, chạy seed một lần vào database production từ máy dev:
-     ```bash
-     DATABASE_URL="<production_db_url>" npx tsx prisma/seed.ts
+     ```powershell
+     $env:DATABASE_URL="<production_db_url>"; $env:DIRECT_URL=$env:DATABASE_URL; npx prisma db seed
      ```
+     Sau khi seed, **đổi mật khẩu tài khoản admin** (`admin123` là mật khẩu demo công khai trong mã nguồn).

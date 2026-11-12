@@ -82,7 +82,7 @@ export default function PosClientPage({
     });
 
     setLoading(false);
-    if (res?.error) {
+    if ("error" in res) {
       toast.error(res.error);
     } else {
       toast.success(`Thanh toán thành công đơn hàng #${res.orderCode}! Tồn Kệ đã được trừ.`);
@@ -217,3 +217,4 @@ export default function PosClientPage({
     </div>
   );
 }
+
