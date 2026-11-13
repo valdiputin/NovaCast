@@ -1,5 +1,5 @@
 # NovaCast — Quản Lý Cửa Hàng Thông Minh
-
+ 
 Hệ thống quản lý bán hàng và kho vận đa loại hình:
 1. **Cửa hàng đồ ăn (F&B)**: Combo, món lẻ, định lượng nguyên liệu, voucher, đơn giao hàng, đánh giá.
 2. **Cửa hàng bán lẻ (Retail)**: Biến thể size/màu, mã vạch, POS tại quầy, nhập hàng từ NCC, trả hàng & chuyển kho, kiểm kê mobile.
