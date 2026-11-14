@@ -88,8 +88,8 @@ export function KpiPill({ icon, tileClass, value, label, change }: { icon: React
   return (
     <Card className="p-5 flex items-center gap-4 relative">
       <IconTile className={tileClass}>{icon}</IconTile>
-      <div className="min-w-0">
-        <div className="text-[26px] font-bold text-[#1E293B] leading-tight">{value}</div>
+      <div className="min-w-0 flex-1">
+        <div classNam="text-base sm:text-lg xl:text-xl tabular-nums break-words font-bold text-[#1E293B] leading-tight">{value}</div>
         <div className="text-sm text-slate-500 mt-1">{label}</div>
       </div>
       {change !== null && (
@@ -109,8 +109,8 @@ export function KpiStat({
   const body = (
     <Card className={cn("p-5 flex items-center gap-4 h-full", href && "hover:border-blue-200 hover:shadow-md transition", className)}>
       <IconTile className={tileClass}>{icon}</IconTile>
-      <div className="min-w-0">
-        <div className="text-[26px] font-bold text-[#1E293B] leading-tight">{value}</div>
+      <div className="min-w-0 flex-1">
+        <div className="text-base sm:text-lg xl:text-xl tabular-nums break-words font-bold text-[#1E293B] leading-tight">{value}</div>
         <div className="text-sm text-slate-500 mt-0.5">{label}</div>
         {sub && <div className="mt-1.5">{sub}</div>}
       </div>
