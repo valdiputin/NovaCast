@@ -51,7 +51,7 @@ function WaveCard({ icon, tile, label, value, sub, wave, href }: { icon: React.R
       <IconTile className={tile}>{icon}</IconTile>
       <div className="relative min-w-0 flex-1">
         <div className="text-[17px] text-[#1E293B]">{label}</div>
-        <div className="text-base sm:text-lg xl:text-xl tabular-nums break-words font-bold text-[#1E293B] leading-tight my-0.5>{value}</div>
+        <div className="text-base sm:text-lg xl:text-xl tabular-nums break-words font-bold text-[#1E293B] leading-tight my-0.5">{value}</div>
         <div className="text-[15px]">{sub}</div>
       </div>
     </Card>
