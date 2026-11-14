@@ -89,7 +89,7 @@ export function KpiPill({ icon, tileClass, value, label, change }: { icon: React
     <Card className="p-5 flex items-center gap-4 relative">
       <IconTile className={tileClass}>{icon}</IconTile>
       <div className="min-w-0 flex-1">
-        <div classNam="text-base sm:text-lg xl:text-xl tabular-nums break-words font-bold text-[#1E293B] leading-tight">{value}</div>
+        <div className="text-base sm:text-lg xl:text-xl tabular-nums break-words font-bold text-[#1E293B] leading-tight">{value}</div>
         <div className="text-sm text-slate-500 mt-1">{label}</div>
       </div>
       {change !== null && (
