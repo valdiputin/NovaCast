@@ -51,7 +51,7 @@ export function StaffManager({ storeId, currentUserId, currentRole, members }: S
         password,
         role,
       });
-      if (res.error) {
+      if ("error" in res && res.error) {
         setMessage({ type: "error", text: res.error });
         return;
       }
@@ -70,7 +70,7 @@ export function StaffManager({ storeId, currentUserId, currentRole, members }: S
     setMessage(null);
     startTransition(async () => {
       const res = await updateStaffRoleAction({ storeId, memberId, role: nextRole });
-      if (res.error) {
+      if ("error" in res && res.error) {
         setMessage({ type: "error", text: res.error });
         return;
       }
@@ -84,7 +84,7 @@ export function StaffManager({ storeId, currentUserId, currentRole, members }: S
     setMessage(null);
     startTransition(async () => {
       const res = await removeStaffAction({ storeId, memberId: member.id });
-      if (res.error) {
+      if ("error" in res && res.error) {
         setMessage({ type: "error", text: res.error });
         return;
       }
