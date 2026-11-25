@@ -5,12 +5,22 @@ import { prisma } from "@/lib/prisma";
 import { roleLabel } from "@/lib/guard";
 import { logoutAction } from "@/app/actions/auth";
 import { ChangePasswordForm } from "./ChangePasswordForm";
+import { StaffManager } from "./StaffManager";
 import Link from "next/link";
 
 export async function AccountView({ type }: { type: "FOOD" | "RETAIL" | "WAREHOUSE" }) {
   const store = await getCurrentStore(type);
   const user = await getCurrentUser();
   const members = await prisma.storeMember.findMany({ where: { storeId: store.id }, include: { user: true }, orderBy: { role: "asc" } });
+  const memberList = members.map((m) => ({
+    id: m.id,
+    userId: m.userId,
+    fullName: m.user.fullName,
+    phone: m.user.phone,
+    email: m.user.email,
+    role: m.role,
+  }));
+
   return (
     <div className="flex-1 flex flex-col">
       <Header title="Tài khoản" subtitle={store.name} />
@@ -22,9 +32,9 @@ export async function AccountView({ type }: { type: "FOOD" | "RETAIL" | "WAREHOU
             </div>
             <div>
               <div className="text-xl font-bold text-slate-800">{user?.fullName}</div>
-              <div className="text-sm text-slate-500">SĐT: {user?.phone} · Email: {user?.email ?? "—"}</div>
+              <div className="text-sm text-slate-500">SĐT: {user?.phone} · Email: {user?.email ?? "–"}</div>
               <div className="mt-1 inline-block px-3 py-0.5 rounded-full bg-blue-50 text-blue-700 text-sm font-semibold">
-                {roleLabel(store.currentRole)} — {store.name}
+                {roleLabel(store.currentRole)} – {store.name}
               </div>
             </div>
           </div>
@@ -36,17 +46,12 @@ export async function AccountView({ type }: { type: "FOOD" | "RETAIL" | "WAREHOU
               <button className="px-4 py-2.5 rounded-xl border border-rose-200 text-rose-600 text-sm font-semibold hover:bg-rose-50">Đăng xuất</button>
             </form>
           </div>
-          <div>
-            <h3 className="font-bold text-slate-800 mb-2">Nhân viên cửa hàng</h3>
-            <div className="divide-y divide-slate-100 border border-slate-100 rounded-xl">
-              {members.map((m) => (
-                <div key={m.id} className="flex items-center justify-between px-4 py-2.5 text-sm">
-                  <span className="font-medium text-slate-700">{m.user.fullName}</span>
-                  <span className="text-slate-500">{roleLabel(m.role)}</span>
-                </div>
-              ))}
-            </div>
-          </div>
+          <StaffManager
+            storeId={store.id}
+            currentUserId={user?.id ?? ""}
+            currentRole={store.currentRole}
+            members={memberList}
+          />
         </Card>
         <Card className="p-6">
           <h3 className="font-bold text-slate-800 mb-4">Đổi mật khẩu</h3>
