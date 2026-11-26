@@ -1,0 +1,8 @@
+-- AlterEnum
+ALTER TYPE "NotificationType" ADD VALUE IF NOT EXISTS 'OVERSTOCK';
+
+-- AlterTable
+ALTER TABLE "product_variants" ADD COLUMN IF NOT EXISTS "maxStock" INTEGER NOT NULL DEFAULT 100;
+
+-- AlterTable
+ALTER TABLE "materials" ADD COLUMN IF NOT EXISTS "maxStock" INTEGER NOT NULL DEFAULT 200;
