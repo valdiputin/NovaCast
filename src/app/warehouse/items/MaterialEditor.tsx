@@ -18,6 +18,7 @@ export interface MaterialValue {
   unit: string;
   locationBin: string;
   minStock: number;
+  maxStock?: number;
   costPrice: number;
   imageUrl: string;
 }
@@ -25,15 +26,15 @@ export interface MaterialValue {
 export function MaterialEditor({ material, bins, mode = "edit" }: { material?: MaterialValue & { totalQty?: number; barcode?: string | null }; bins: string[]; mode?: "edit" | "view" }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
-  const empty: MaterialValue = { sku: "", name: "", type: "RAW_MATERIAL", unit: "Cái", locationBin: bins[0] ?? "Kệ A1 - Tầng 1", minStock: 10, costPrice: 0, imageUrl: "" };
-  const [f, setF] = useState<MaterialValue>(material ?? empty);
+  const empty: MaterialValue = { sku: "", name: "", type: "RAW_MATERIAL", unit: "Cái", locationBin: bins[0] ?? "Kệ A1 - Tầng 1", minStock: 10, maxStock: 200, costPrice: 0, imageUrl: "" };
+  const [f, setF] = useState<MaterialValue>(material ? { ...material, maxStock: material.maxStock ?? 200 } : empty);
   const [pending, start] = useTransition();
   const view = mode === "view";
 
   return (
     <>
       {material ? (
-        <button onClick={() => { setF(material); setOpen(true); }} className="w-11 h-11 rounded-xl bg-blue-50 text-[#1565F5] inline-flex items-center justify-center hover:bg-blue-100" title={view ? "Xem chi tiết" : "Sửa"}>
+        <button onClick={() => { setF({ ...material, maxStock: material.maxStock ?? 200 }); setOpen(true); }} className="w-11 h-11 rounded-xl bg-blue-50 text-[#1565F5] inline-flex items-center justify-center hover:bg-blue-100" title={view ? "Xem chi tiết" : "Sửa"}>
           {view ? <Eye className="w-6 h-6" /> : <Pencil className="w-5 h-5" fill="currentColor" />}
         </button>
       ) : (
@@ -47,12 +48,13 @@ export function MaterialEditor({ material, bins, mode = "edit" }: { material?: M
             <Thumb src={f.imageUrl} alt={f.name} size={110} />
             <dl className="grid grid-cols-2 gap-x-6 gap-y-2 text-[16px]">
               <dt className="text-slate-500">Mã SKU</dt><dd className="font-semibold">{f.sku}</dd>
-              <dt className="text-slate-500">Mã vạch</dt><dd>{material?.barcode ?? "—"}</dd>
+              <dt className="text-slate-500">Mã vạch</dt><dd>{material?.barcode ?? "-"}</dd>
               <dt className="text-slate-500">Loại hàng</dt><dd>{MATERIAL_TYPE[f.type].label}</dd>
               <dt className="text-slate-500">Đơn vị tính</dt><dd>{f.unit}</dd>
               <dt className="text-slate-500">Vị trí kệ</dt><dd>{f.locationBin}</dd>
               <dt className="text-slate-500">Tồn kho</dt><dd className="font-semibold">{material?.totalQty ?? 0} {f.unit}</dd>
               <dt className="text-slate-500">Định mức tối thiểu</dt><dd>{f.minStock}</dd>
+              <dt className="text-slate-500">Định mức tối đa</dt><dd>{f.maxStock ?? 200}</dd>
               <dt className="text-slate-500">Giá vốn bình quân</dt><dd>{formatCurrency(f.costPrice)}</dd>
             </dl>
           </div>
@@ -62,7 +64,7 @@ export function MaterialEditor({ material, bins, mode = "edit" }: { material?: M
             onSubmit={(e) => {
               e.preventDefault();
               start(async () => {
-                const res = await saveMaterialAction({ ...f, id: material?.id });
+                const res = await saveMaterialAction({ ...f, id: material?.id, maxStock: f.maxStock ?? 200 });
                 if ("error" in res) return void toast.error(res.error);
                 toast.success(material ? "Đã cập nhật vật tư" : "Đã thêm vật tư mới");
                 setOpen(false);
@@ -100,10 +102,14 @@ export function MaterialEditor({ material, bins, mode = "edit" }: { material?: M
                 <datalist id="bins">{bins.map((b) => <option key={b} value={b} />)}</datalist>
               </div>
             </div>
-            <div className="grid grid-cols-3 gap-4">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
               <div>
                 <label className={labelCls}>Định mức tối thiểu</label>
                 <input type="number" min={0} className={field} value={f.minStock} onChange={(e) => setF({ ...f, minStock: Number(e.target.value) })} />
+              </div>
+              <div>
+                <label className={labelCls}>Định mức tối đa</label>
+                <input type="number" min={0} className={field} value={f.maxStock ?? 200} onChange={(e) => setF({ ...f, maxStock: Number(e.target.value) })} />
               </div>
               {!material && (
                 <div>
@@ -111,7 +117,7 @@ export function MaterialEditor({ material, bins, mode = "edit" }: { material?: M
                   <input type="number" min={0} step={1000} className={field} value={f.costPrice || ""} onChange={(e) => setF({ ...f, costPrice: Number(e.target.value) })} />
                 </div>
               )}
-              <div>
+              <div className={material ? "col-span-2" : ""}>
                 <label className={labelCls}>Ảnh (emoji / URL)</label>
                 <input className={field} value={f.imageUrl.replace(/^emoji:/, "")} onChange={(e) => setF({ ...f, imageUrl: e.target.value })} />
               </div>
