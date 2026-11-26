@@ -163,7 +163,7 @@ const retailProductSchema = z.object({
   costPrice: z.number().int().nonnegative("Giá vốn không hợp lệ"),
   price: z.number().int().positive("Giá bán phải lớn hơn 0"),
   discountPercent: z.number().int().refine((v) => [0, 5, 10, 15, 20].includes(v), "Mức giảm không hợp lệ").default(0),
-  minStock: z.number().int().min(0).default(5),
+  minStock: z.number().int().min(0).default(5), maxStock: z.number().int().min(0).default(100),
   colors: z.array(z.string().trim().min(1)).default([]),
   sizes: z.array(z.string().trim().min(1)).default([]),
   imageUrl: imageField,
@@ -197,7 +197,7 @@ export async function saveRetailProductAction(input: z.input<typeof retailProduc
       const res = await prisma.product.updateMany({ where: { id: d.id, storeId: store.id, deletedAt: null }, data: productData });
       if (res.count === 0) return { error: "Không tìm thấy sản phẩm" };
       // Giá bán áp dụng cho mọi biến thể; giá vốn biến thể giữ theo bình quân nhập kho
-      await prisma.productVariant.updateMany({ where: { productId: d.id }, data: { price: BigInt(d.price) } });
+      await prisma.productVariant.updateMany({ where: { productId: d.id }, data: { price: BigInt(d.price), minStock: d.minStock, maxStock: d.maxStock } });
     } else {
       // Sinh tổ hợp biến thể Màu × Size
       const colors = d.colors.length ? d.colors : [""];
@@ -219,7 +219,7 @@ export async function saveRetailProductAction(input: z.input<typeof retailProduc
           variants: {
             create: variants.map((v) => ({
               ...v, barcode: `893${Date.now().toString().slice(-6)}${Math.floor(Math.random() * 1000).toString().padStart(3, "0")}`,
-              costPrice: BigInt(d.costPrice), price: BigInt(d.price), minStock: d.minStock,
+              costPrice: BigInt(d.costPrice), price: BigInt(d.price), minStock: d.minStock, maxStock: d.maxStock,
             })),
           },
         },
@@ -242,7 +242,7 @@ const materialSchema = z.object({
   type: z.nativeEnum(MaterialType),
   unit: z.string().trim().min(1, "Vui lòng nhập đơn vị tính").max(20),
   locationBin: z.string().trim().min(1, "Vui lòng chọn vị trí kệ").max(100),
-  minStock: z.number().int().min(0),
+  minStock: z.number().int().min(0), maxStock: z.number().int().min(0).default(200),
   costPrice: z.number().int().nonnegative(),
   imageUrl: imageField,
 });
