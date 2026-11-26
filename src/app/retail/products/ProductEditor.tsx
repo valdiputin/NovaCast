@@ -16,7 +16,7 @@ export interface RetailProductValue {
   categoryId: string;
   costPrice: number;
   price: number;
-  discountPercent: number;
+  discountPercent: number; minStock?: number; maxStock?: number;
   imageUrl: string;
 }
 
@@ -25,11 +25,11 @@ export function ProductEditor({
 }: { categories: { id: string; name: string }[]; product?: RetailProductValue; buttonClass?: string; iconOnly?: boolean }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
-  const empty: RetailProductValue = { code: "", name: "", description: "", categoryId: categories[0]?.id ?? "", costPrice: 0, price: 0, discountPercent: 0, imageUrl: "" };
+  const empty: RetailProductValue = { code: "", name: "", description: "", categoryId: categories[0]?.id ?? "", costPrice: 0, price: 0, discountPercent: 0, minStock: 5, maxStock: 100, imageUrl: "" };
   const [f, setF] = useState<RetailProductValue>(product ?? empty);
   const [colors, setColors] = useState("");
   const [sizes, setSizes] = useState("");
-  const [minStock, setMinStock] = useState(5);
+  const [minStock, setMinStock] = useState(product?.minStock ?? 5); const [maxStock, setMaxStock] = useState(product?.maxStock ?? 100);
   const [pending, start] = useTransition();
   const split = (s: string) => s.split(",").map((x) => x.trim()).filter(Boolean);
   const combos = Math.max(1, split(colors).length) * Math.max(1, split(sizes).length);
@@ -37,11 +37,11 @@ export function ProductEditor({
   return (
     <>
       {product ? (
-        <button onClick={() => { setF(product); setOpen(true); }} className={buttonClass ?? "w-11 h-11 rounded-xl bg-blue-50 text-[#1565F5] flex items-center justify-center hover:bg-blue-100"} title="Sửa">
+        <button onClick={() => { setF(product); setMinStock(product.minStock ?? 5); setMaxStock(product.maxStock ?? 100); setOpen(true); }} className={buttonClass ?? "w-11 h-11 rounded-xl bg-blue-50 text-[#1565F5] flex items-center justify-center hover:bg-blue-100"} title="Sửa">
           <Pencil className="w-5 h-5" fill="currentColor" />
         </button>
       ) : (
-        <button onClick={() => { setF(empty); setColors(""); setSizes(""); setOpen(true); }} className={cn("inline-flex items-center gap-2.5 h-14 px-7 rounded-xl bg-[#1565F5] hover:bg-[#0F55D8] text-white font-semibold text-[19px]", buttonClass)}>
+        <button onClick={() => { setF(empty); setColors(""); setSizes(""); setMinStock(5); setMaxStock(100); setOpen(true); }} className={cn("inline-flex items-center gap-2.5 h-14 px-7 rounded-xl bg-[#1565F5] hover:bg-[#0F55D8] text-white font-semibold text-[19px]", buttonClass)}>
           <Plus className="w-6 h-6" /> {iconOnly ? "" : "Thêm sản phẩm"}
         </button>
       )}
@@ -51,7 +51,7 @@ export function ProductEditor({
           onSubmit={(e) => {
             e.preventDefault();
             start(async () => {
-              const res = await saveRetailProductAction({ ...f, id: product?.id, colors: split(colors), sizes: split(sizes), minStock });
+              const res = await saveRetailProductAction({ ...f, id: product?.id, colors: split(colors), sizes: split(sizes), minStock, maxStock });
               if ("error" in res) return void toast.error(res.error);
               toast.success(product ? "Đã cập nhật sản phẩm" : `Đã thêm sản phẩm với ${combos} biến thể`);
               setOpen(false);
@@ -100,7 +100,7 @@ export function ProductEditor({
                 ))}
               </select>
             </div>
-          </div>
+          </div> <div className="grid grid-cols-2 gap-4"><div><label className={labelCls}>Định mức tối thiểu / biến thể</label><input type="number" min={0} className={field} value={minStock} onChange={(e) => setMinStock(Number(e.target.value))} /></div><div><label className={labelCls}>Định mức tối đa / biến thể (0 = không giới hạn)</label><input type="number" min={0} className={field} value={maxStock} onChange={(e) => setMaxStock(Number(e.target.value))} /></div></div>
           <div>
             <label className={labelCls}>Ảnh (emoji hoặc URL ảnh)</label>
             <input className={field} placeholder="👕 hoặc https://..." value={f.imageUrl.replace(/^emoji:/, "")} onChange={(e) => setF({ ...f, imageUrl: e.target.value })} />
@@ -108,7 +108,7 @@ export function ProductEditor({
           {!product && (
             <div className="rounded-2xl border border-blue-100 bg-blue-50/40 p-4 space-y-3">
               <div className="font-semibold text-[#1E293B]">Biến thể (sinh tự động Màu × Size)</div>
-              <div className="grid grid-cols-3 gap-4">
+              <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className={labelCls}>Màu (phân cách bằng dấu phẩy)</label>
                   <input className={field} placeholder="Trắng, Đen, Xám" value={colors} onChange={(e) => setColors(e.target.value)} />
@@ -117,10 +117,7 @@ export function ProductEditor({
                   <label className={labelCls}>Size</label>
                   <input className={field} placeholder="M, L, XL" value={sizes} onChange={(e) => setSizes(e.target.value)} />
                 </div>
-                <div>
-                  <label className={labelCls}>Định mức tối thiểu / biến thể</label>
-                  <input type="number" min={0} className={field} value={minStock} onChange={(e) => setMinStock(Number(e.target.value))} />
-                </div>
+             
               </div>
               <div className="text-sm text-slate-500">Sẽ tạo {combos} biến thể, mỗi biến thể có SKU + mã vạch riêng. Tồn kho nhập qua phiếu Nhập hàng.</div>
             </div>
