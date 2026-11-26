@@ -65,10 +65,21 @@ export const MOVEMENT_LABEL: Record<string, string> = {
   DISPOSE: "Xuất hủy",
 };
 
-/** Trạng thái tồn kho tự tính: 0 → Hết hàng; ≤ định mức → Sắp hết; còn lại → Đủ hàng */
-export function stockState(qty: number, min: number, labels = { ok: "Đủ hàng", low: "Sắp hết", out: "Hết hàng" }) {
+/** Trạng thái tồn kho tự tính: 0 → Hết hàng; ≤ min → Sắp hết; > max → Tồn quá mức; còn lại → Đủ hàng */
+export function stockState(
+  qty: number,
+  min: number,
+  labels: { ok: string; low: string; out: string; over?: string } = {
+    ok: "Đủ hàng",
+    low: "Sắp hết",
+    out: "Hết hàng",
+    over: "Tồn quá mức",
+  },
+  max?: number | null
+) {
   if (qty <= 0) return { label: labels.out, tone: "red" as Tone };
   if (qty <= min) return { label: labels.low, tone: "amber" as Tone };
+  if (max && max > 0 && qty > max) return { label: labels.over ?? "Tồn quá mức", tone: "purple" as Tone };
   return { label: labels.ok, tone: "green" as Tone };
 }
 
