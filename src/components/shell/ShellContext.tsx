@@ -6,6 +6,9 @@ export interface ShellNotification {
   id: string;
   title: string;
   message: string;
+  type: string;
+  isRead: boolean;
+  linkUrl?: string | null;
   at: string;
 }
 
